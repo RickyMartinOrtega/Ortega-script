@@ -4,7 +4,6 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
-local TweenService = game:GetService("TweenService")
 
 local Camera = workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
@@ -15,7 +14,8 @@ local Config = {
     FOV = 100,
     ShowFOV = false,
     MenuVisible = true,
-    TargetPart = "Head"
+    TargetPart = "Head",
+    SelectedPlayer = nil
 }
 
 local ScreenGui = Instance.new("ScreenGui", CoreGui)
@@ -53,12 +53,13 @@ local Scroll = Instance.new("ScrollingFrame", Main)
 Scroll.Size = UDim2.new(1, -20, 1, -50)
 Scroll.Position = UDim2.new(0, 10, 0, 45)
 Scroll.BackgroundTransparency = 1
-Scroll.CanvasSize = UDim2.new(0, 0, 1.7, 0)
+Scroll.CanvasSize = UDim2.new(0, 0, 2.5, 0)
 Scroll.ScrollBarThickness = 0
 
 local UIList = Instance.new("UIListLayout", Scroll)
 UIList.Padding = UDim.new(0, 10)
 
+-- Toggle
 local function AddToggle(name, callback)
     local Btn = Instance.new("TextButton", Scroll)
     Btn.Size = UDim2.new(1, 0, 0, 40)
@@ -77,6 +78,7 @@ local function AddToggle(name, callback)
     end)
 end
 
+-- Slider
 local function AddSlider(name, min, max, default, callback)
     local value = default
 
@@ -128,6 +130,7 @@ local function AddSlider(name, min, max, default, callback)
     end)
 end
 
+-- Target Part
 local function AddTargetSelector()
     local Btn = Instance.new("TextButton", Scroll)
     Btn.Size = UDim2.new(1, 0, 0, 40)
@@ -147,62 +150,91 @@ local function AddTargetSelector()
             mode = "Head"
             Btn.Text = "Target: HEAD"
         end
-
         Config.TargetPart = mode
     end)
 end
 
+-- ✅ PLAYER SELECTOR WITH REFRESH
+local function AddPlayerSelector()
+    local Label = Instance.new("TextLabel", Scroll)
+    Label.Size = UDim2.new(1, 0, 0, 30)
+    Label.Text = "Target: NONE"
+    Label.TextColor3 = Color3.new(1,1,1)
+    Label.BackgroundTransparency = 1
+    Label.Font = Enum.Font.GothamBold
+
+    local PlayerButtons = {}
+
+    local function ClearButtons()
+        for _, btn in pairs(PlayerButtons) do
+            if btn then btn:Destroy() end
+        end
+        PlayerButtons = {}
+    end
+
+    local function CreateButton(p)
+        local Btn = Instance.new("TextButton", Scroll)
+        Btn.Size = UDim2.new(1, 0, 0, 35)
+        Btn.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+        Btn.Text = p.Name
+        Btn.TextColor3 = Color3.new(1,1,1)
+        Btn.Font = Enum.Font.Gotham
+        Instance.new("UICorner", Btn)
+
+        Btn.MouseButton1Click:Connect(function()
+            Config.SelectedPlayer = p
+            Label.Text = "Target: " .. p.Name
+        end)
+
+        table.insert(PlayerButtons, Btn)
+    end
+
+    local function RefreshPlayers()
+        ClearButtons()
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer then
+                CreateButton(p)
+            end
+        end
+    end
+
+    local RefreshBtn = Instance.new("TextButton", Scroll)
+    RefreshBtn.Size = UDim2.new(1, 0, 0, 35)
+    RefreshBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 70)
+    RefreshBtn.Text = "Refresh Players"
+    RefreshBtn.TextColor3 = Color3.new(1,1,1)
+    RefreshBtn.Font = Enum.Font.GothamBold
+    Instance.new("UICorner", RefreshBtn)
+
+    RefreshBtn.MouseButton1Click:Connect(RefreshPlayers)
+
+    Players.PlayerAdded:Connect(RefreshPlayers)
+
+    Players.PlayerRemoving:Connect(function(p)
+        if Config.SelectedPlayer == p then
+            Config.SelectedPlayer = nil
+            Label.Text = "Target: NONE"
+        end
+        RefreshPlayers()
+    end)
+
+    RefreshPlayers()
+end
+
+-- UI Build
 AddToggle("Aimlock", function(v) Config.Aimbot = v end)
-
-AddSlider("Aim Speed", 1, 100, Config.SpeedPercent, function(val)
-    Config.SpeedPercent = val
-end)
-
-AddSlider("FOV Size", 50, 300, Config.FOV, function(val)
-    Config.FOV = val
-end)
-
+AddSlider("Aim Speed", 1, 100, Config.SpeedPercent, function(val) Config.SpeedPercent = val end)
+AddSlider("FOV Size", 50, 300, Config.FOV, function(val) Config.FOV = val end)
 AddToggle("FOV Circle", function(v) Config.ShowFOV = v end)
-
 AddTargetSelector()
+AddPlayerSelector()
 
 OpenBtn.MouseButton1Click:Connect(function()
     Config.MenuVisible = not Config.MenuVisible
     Main.Visible = Config.MenuVisible
 end)
 
-local function MakeDraggable(frame)
-    local dragging = false
-    local dragStart, startPos
-
-    frame.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-            dragStart = input.Position
-            startPos = frame.Position
-        end
-    end)
-
-    frame.InputChanged:Connect(function(input)
-        if dragging then
-            local delta = input.Position - dragStart
-            frame.Position = UDim2.new(
-                startPos.X.Scale,
-                startPos.X.Offset + delta.X,
-                startPos.Y.Scale,
-                startPos.Y.Offset + delta.Y
-            )
-        end
-    end)
-
-    UIS.InputEnded:Connect(function()
-        dragging = false
-    end)
-end
-
-MakeDraggable(Main)
-MakeDraggable(OpenBtn)
-
+-- FOV Circle
 local Circle = Instance.new("Frame", ScreenGui)
 Circle.AnchorPoint = Vector2.new(0.5, 0.5)
 Circle.BackgroundTransparency = 1
@@ -220,31 +252,18 @@ RunService.RenderStepped:Connect(function()
         Circle.Size = UDim2.new(0, Config.FOV * 2, 0, Config.FOV * 2)
     end
 
-    if Config.Aimbot then
-        local target = nil
-        local dist = Config.FOV * 2
-        local screenCenter = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+    if Config.Aimbot and Config.SelectedPlayer then
+        local char = Config.SelectedPlayer.Character
+        if char and char:FindFirstChild(Config.TargetPart) then
+            local target = char[Config.TargetPart]
 
-        for _, p in pairs(Players:GetPlayers()) do
-            if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild(Config.TargetPart) then
-                local part = p.Character[Config.TargetPart]
-                local pos, vis = Camera:WorldToViewportPoint(part.Position)
-
-                if vis then
-                    local mag = (Vector2.new(pos.X, pos.Y) - screenCenter).Magnitude
-                    if mag < dist then
-                        dist = mag
-                        target = part
-                    end
-                end
+            local pos, vis = Camera:WorldToViewportPoint(target.Position)
+            if vis then
+                local lerpVal = math.clamp(Config.SpeedPercent / 100, 0.01, 1)
+                local current = Camera.CFrame
+                local goal = CFrame.lookAt(current.Position, target.Position)
+                Camera.CFrame = current:Lerp(goal, lerpVal)
             end
-        end
-
-        if target then
-            local lerpVal = math.clamp(Config.SpeedPercent / 100, 0.01, 1)
-            local current = Camera.CFrame
-            local goal = CFrame.lookAt(current.Position, target.Position)
-            Camera.CFrame = current:Lerp(goal, lerpVal)
         end
     end
 end)
