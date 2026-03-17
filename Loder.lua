@@ -53,11 +53,47 @@ local Scroll = Instance.new("ScrollingFrame", Main)
 Scroll.Size = UDim2.new(1, -20, 1, -50)
 Scroll.Position = UDim2.new(0, 10, 0, 45)
 Scroll.BackgroundTransparency = 1
-Scroll.CanvasSize = UDim2.new(0, 0, 2.5, 0)
+Scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+Scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
 Scroll.ScrollBarThickness = 0
 
 local UIList = Instance.new("UIListLayout", Scroll)
 UIList.Padding = UDim.new(0, 10)
+
+-- ✅ EXTRA SPACE FOR INFINITE SCROLL FEEL
+local Spacer = Instance.new("Frame", Scroll)
+Spacer.Size = UDim2.new(1, 0, 0, 1000)
+Spacer.BackgroundTransparency = 1
+
+-- ✅ DRAG FUNCTION
+local function MakeDraggable(frame)
+    local dragging = false
+    local dragStart, startPos
+
+    frame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+        end
+    end)
+
+    frame.InputChanged:Connect(function(input)
+        if dragging then
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+
+    UIS.InputEnded:Connect(function()
+        dragging = false
+    end)
+end
 
 -- Toggle
 local function AddToggle(name, callback)
@@ -154,7 +190,7 @@ local function AddTargetSelector()
     end)
 end
 
--- ✅ PLAYER SELECTOR WITH REFRESH
+-- Player Selector
 local function AddPlayerSelector()
     local Label = Instance.new("TextLabel", Scroll)
     Label.Size = UDim2.new(1, 0, 0, 30)
@@ -221,7 +257,7 @@ local function AddPlayerSelector()
     RefreshPlayers()
 end
 
--- UI Build
+-- Build UI
 AddToggle("Aimlock", function(v) Config.Aimbot = v end)
 AddSlider("Aim Speed", 1, 100, Config.SpeedPercent, function(val) Config.SpeedPercent = val end)
 AddSlider("FOV Size", 50, 300, Config.FOV, function(val) Config.FOV = val end)
@@ -233,6 +269,10 @@ OpenBtn.MouseButton1Click:Connect(function()
     Config.MenuVisible = not Config.MenuVisible
     Main.Visible = Config.MenuVisible
 end)
+
+-- Enable Drag
+MakeDraggable(Main)
+MakeDraggable(OpenBtn)
 
 -- FOV Circle
 local Circle = Instance.new("Frame", ScreenGui)
