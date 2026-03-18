@@ -221,7 +221,6 @@ local function AddPlayerSelector()
             Config.SelectedPlayer = p
             Label.Text = "Target: " .. p.Name
 
-            -- Highlight selected
             for _, otherBtn in pairs(PlayerButtons) do
                 if otherBtn and otherBtn ~= Btn then
                     otherBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
@@ -307,6 +306,93 @@ RunService.RenderStepped:Connect(function()
                 local current = Camera.CFrame
                 local goal = CFrame.lookAt(current.Position, target.Position)
                 Camera.CFrame = current:Lerp(goal, lerpVal)
+            end
+        end
+    end
+end)
+
+-- =========================
+-- 🔥 ADDED ONLY (NO REPLACE)
+-- =========================
+
+Config.AutoSelectClosest = false
+Config.Prediction = 0.1
+Config.Trigger = false
+Config.ESP = false
+
+local function GetClosestPlayer()
+    local closest = nil
+    local shortest = math.huge
+
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+            local pos, visible = Camera:WorldToViewportPoint(p.Character.HumanoidRootPart.Position)
+            if visible then
+                local dist = (Vector2.new(pos.X, pos.Y) - Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)).Magnitude
+                if dist < shortest then
+                    shortest = dist
+                    closest = p
+                end
+            end
+        end
+    end
+
+    return closest
+end
+
+local ESPFolder = Instance.new("Folder", CoreGui)
+
+local function CreateESP(player)
+    if player == LocalPlayer then return end
+
+    local box = Instance.new("BoxHandleAdornment")
+    box.Size = Vector3.new(4,6,2)
+    box.Color3 = Color3.fromRGB(0,255,150)
+    box.Transparency = 0.5
+    box.AlwaysOnTop = true
+    box.ZIndex = 5
+    box.Parent = ESPFolder
+
+    RunService.RenderStepped:Connect(function()
+        if Config.ESP and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            box.Adornee = player.Character.HumanoidRootPart
+        else
+            box.Adornee = nil
+        end
+    end)
+end
+
+for _, p in pairs(Players:GetPlayers()) do
+    CreateESP(p)
+end
+Players.PlayerAdded:Connect(CreateESP)
+
+AddToggle("Auto Closest", function(v) Config.AutoSelectClosest = v end)
+AddToggle("ESP", function(v) Config.ESP = v end)
+AddToggle("Triggerbot", function(v) Config.Trigger = v end)
+AddSlider("Prediction", 0, 20, 1, function(v) Config.Prediction = v/100 end)
+
+RunService.RenderStepped:Connect(function()
+    if Config.AutoSelectClosest then
+        Config.SelectedPlayer = GetClosestPlayer()
+    end
+
+    if Config.Aimbot and Config.SelectedPlayer then
+        local char = Config.SelectedPlayer.Character
+        if char and char:FindFirstChild(Config.TargetPart) then
+            local target = char[Config.TargetPart]
+
+            local velocity = target.Velocity or Vector3.new()
+            local predicted = target.Position + velocity * Config.Prediction
+
+            if Config.Trigger then
+                local pos, vis = Camera:WorldToViewportPoint(predicted)
+                if vis then
+                    local center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+                    if (Vector2.new(pos.X,pos.Y) - center).Magnitude < 10 then
+                        print("SHOOT")
+                    end
+                end
             end
         end
     end
