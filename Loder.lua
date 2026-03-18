@@ -60,12 +60,12 @@ Scroll.ScrollBarThickness = 0
 local UIList = Instance.new("UIListLayout", Scroll)
 UIList.Padding = UDim.new(0, 10)
 
--- ✅ EXTRA SPACE FOR INFINITE SCROLL FEEL
+-- Spacer (infinite scroll feel)
 local Spacer = Instance.new("Frame", Scroll)
 Spacer.Size = UDim2.new(1, 0, 0, 1000)
 Spacer.BackgroundTransparency = 1
 
--- ✅ DRAG FUNCTION
+-- Drag
 local function MakeDraggable(frame)
     local dragging = false
     local dragStart, startPos
@@ -166,7 +166,7 @@ local function AddSlider(name, min, max, default, callback)
     end)
 end
 
--- Target Part
+-- Target selector
 local function AddTargetSelector()
     local Btn = Instance.new("TextButton", Scroll)
     Btn.Size = UDim2.new(1, 0, 0, 40)
@@ -190,7 +190,7 @@ local function AddTargetSelector()
     end)
 end
 
--- Player Selector
+-- Player selector (WITH HIGHLIGHT)
 local function AddPlayerSelector()
     local Label = Instance.new("TextLabel", Scroll)
     Label.Size = UDim2.new(1, 0, 0, 30)
@@ -220,6 +220,15 @@ local function AddPlayerSelector()
         Btn.MouseButton1Click:Connect(function()
             Config.SelectedPlayer = p
             Label.Text = "Target: " .. p.Name
+
+            -- Highlight selected
+            for _, otherBtn in pairs(PlayerButtons) do
+                if otherBtn and otherBtn ~= Btn then
+                    otherBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+                end
+            end
+
+            Btn.BackgroundColor3 = Color3.fromRGB(0, 170, 100)
         end)
 
         table.insert(PlayerButtons, Btn)
@@ -227,6 +236,9 @@ local function AddPlayerSelector()
 
     local function RefreshPlayers()
         ClearButtons()
+        Config.SelectedPlayer = nil
+        Label.Text = "Target: NONE"
+
         for _, p in pairs(Players:GetPlayers()) do
             if p ~= LocalPlayer then
                 CreateButton(p)
@@ -245,14 +257,7 @@ local function AddPlayerSelector()
     RefreshBtn.MouseButton1Click:Connect(RefreshPlayers)
 
     Players.PlayerAdded:Connect(RefreshPlayers)
-
-    Players.PlayerRemoving:Connect(function(p)
-        if Config.SelectedPlayer == p then
-            Config.SelectedPlayer = nil
-            Label.Text = "Target: NONE"
-        end
-        RefreshPlayers()
-    end)
+    Players.PlayerRemoving:Connect(RefreshPlayers)
 
     RefreshPlayers()
 end
@@ -270,11 +275,10 @@ OpenBtn.MouseButton1Click:Connect(function()
     Main.Visible = Config.MenuVisible
 end)
 
--- Enable Drag
 MakeDraggable(Main)
 MakeDraggable(OpenBtn)
 
--- FOV Circle
+-- FOV circle
 local Circle = Instance.new("Frame", ScreenGui)
 Circle.AnchorPoint = Vector2.new(0.5, 0.5)
 Circle.BackgroundTransparency = 1
