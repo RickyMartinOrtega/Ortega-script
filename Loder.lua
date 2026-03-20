@@ -5,45 +5,44 @@ local player = game.Players.LocalPlayer
 
 -- Create ScreenGui
 local screenGui = Instance.new("ScreenGui")
-screenGui.ResetOnSpawn = false -- ✅ prevents GUI from disappearing after respawn
+screenGui.ResetOnSpawn = false
 screenGui.Parent = player:WaitForChild("PlayerGui")
 
--- Create Toggle Button
+-- Toggle Button
 local button = Instance.new("TextButton")
 button.Size = UDim2.new(0, 150, 0, 50)
 button.Position = UDim2.new(0.5, -75, 0.9, 0)
 button.Text = "AimLock: OFF"
-button.TextColor3 = Color3.new(1,1,1) -- white text
-button.BackgroundColor3 = Color3.new(0,0,0) -- black background
+button.TextColor3 = Color3.new(1,1,1)
+button.BackgroundColor3 = Color3.new(0,0,0)
 button.Parent = screenGui
 
--- Rounded corners
 local buttonCorner = Instance.new("UICorner")
 buttonCorner.CornerRadius = UDim.new(0, 12)
 buttonCorner.Parent = button
 
--- Rainbow edge (UIStroke with gradient)
+-- Rainbow edge
 local buttonStroke = Instance.new("UIStroke")
 buttonStroke.Thickness = 3
 buttonStroke.Parent = button
 
 local gradient = Instance.new("UIGradient")
 gradient.Color = ColorSequence.new{
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(255,0,0)),   -- red
-    ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255,165,0)), -- orange
-    ColorSequenceKeypoint.new(0.4, Color3.fromRGB(255,255,0)), -- yellow
-    ColorSequenceKeypoint.new(0.6, Color3.fromRGB(0,255,0)),   -- green
-    ColorSequenceKeypoint.new(0.8, Color3.fromRGB(0,0,255)),   -- blue
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(128,0,128))    -- purple
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(255,0,0)),
+    ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255,165,0)),
+    ColorSequenceKeypoint.new(0.4, Color3.fromRGB(255,255,0)),
+    ColorSequenceKeypoint.new(0.6, Color3.fromRGB(0,255,0)),
+    ColorSequenceKeypoint.new(0.8, Color3.fromRGB(0,0,255)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(128,0,128))
 }
 gradient.Rotation = 90
 gradient.Parent = buttonStroke
 
--- Create Crosshair (hidden by default)
+-- Crosshair
 local crosshair = Instance.new("Frame")
 crosshair.Size = UDim2.new(0, 20, 0, 20)
 crosshair.Position = UDim2.new(0.5, -10, 0.5, -10)
-crosshair.BackgroundColor3 = Color3.new(1, 0, 0) -- red
+crosshair.BackgroundColor3 = Color3.new(1, 0, 0)
 crosshair.Visible = false
 crosshair.Parent = screenGui
 
@@ -51,7 +50,7 @@ local crosshairCorner = Instance.new("UICorner")
 crosshairCorner.CornerRadius = UDim.new(0, 10)
 crosshairCorner.Parent = crosshair
 
--- Create Close Button
+-- Close Button
 local closeButton = Instance.new("TextButton")
 closeButton.Size = UDim2.new(0, 30, 0, 30)
 closeButton.Position = UDim2.new(1, -35, 0, 5)
@@ -64,7 +63,7 @@ local closeCorner = Instance.new("UICorner")
 closeCorner.CornerRadius = UDim.new(0, 8)
 closeCorner.Parent = closeButton
 
--- Create Reopen Button (hidden by default)
+-- Reopen Button
 local reopenButton = Instance.new("TextButton")
 reopenButton.Size = UDim2.new(0, 100, 0, 40)
 reopenButton.Position = UDim2.new(0.5, -50, 0.8, 0)
@@ -82,7 +81,7 @@ reopenCorner.Parent = reopenButton
 local strengthBox = Instance.new("TextBox")
 strengthBox.Size = UDim2.new(0, 100, 0, 30)
 strengthBox.Position = UDim2.new(0.5, -50, 0.8, -40)
-strengthBox.Text = "100" -- default strength %
+strengthBox.Text = "100"
 strengthBox.TextColor3 = Color3.new(1,1,1)
 strengthBox.BackgroundColor3 = Color3.new(0,0,0)
 strengthBox.Parent = screenGui
@@ -93,7 +92,7 @@ strengthCorner.Parent = strengthBox
 
 -- State variables
 local aimLockEnabled = false
-local aimStrength = 1 -- 1.0 = 100%
+local aimStrength = 1
 
 -- Toggle function
 button.MouseButton1Click:Connect(function()
@@ -106,8 +105,8 @@ end)
 strengthBox.FocusLost:Connect(function()
     local val = tonumber(strengthBox.Text)
     if val then
-        val = math.clamp(val, 1, 100) -- keep between 1 and 100
-        aimStrength = val / 100       -- convert to 0.01–1.0
+        val = math.clamp(val, 1, 100)
+        aimStrength = val / 100
         strengthBox.Text = tostring(val)
     else
         strengthBox.Text = tostring(math.floor(aimStrength*100))
@@ -116,7 +115,7 @@ end)
 
 -- Player and camera references
 local camera = workspace.CurrentCamera
-local range = 200 -- ✅ updated range to 200 studs
+local range = 200
 local highlight = nil
 
 -- Function to find nearest player
@@ -134,20 +133,17 @@ local function getNearestPlayer()
     return nearest
 end
 
--- Update camera and highlight with adjustable strength
+-- Update camera and highlight
 game:GetService("RunService").RenderStepped:Connect(function()
     if aimLockEnabled and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
         local targetPlayer = getNearestPlayer()
-
         if targetPlayer then
             local targetPos = targetPlayer.Character.HumanoidRootPart.Position
             local currentPos = camera.CFrame.Position
             local desiredCFrame = CFrame.new(currentPos, targetPos)
 
-            -- Smoothly interpolate based on aimStrength
             camera.CFrame = camera.CFrame:Lerp(desiredCFrame, aimStrength)
 
-            -- Add highlight if not already
             if not highlight then
                 highlight = Instance.new("Highlight")
                 highlight.FillColor = Color3.new(1, 0, 0)
@@ -168,10 +164,9 @@ game:GetService("RunService").RenderStepped:Connect(function()
     end
 end)
 
--- Drag function (reusable)
+-- Drag function
 local function makeDraggable(guiObject)
     local dragging, dragInput, dragStart, startPos
-
     local function update(input)
         local delta = input.Position - dragStart
         guiObject.Position = UDim2.new(
@@ -181,13 +176,11 @@ local function makeDraggable(guiObject)
             startPos.Y.Offset + delta.Y
         )
     end
-
     guiObject.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             dragStart = input.Position
             startPos = guiObject.Position
-
             input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then
                     dragging = false
@@ -195,13 +188,11 @@ local function makeDraggable(guiObject)
             end)
         end
     end)
-
     guiObject.InputChanged:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
             dragInput = input
         end
     end)
-
     UserInputService.InputChanged:Connect(function(input)
         if input == dragInput and dragging then
             update(input)
