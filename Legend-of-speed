@@ -1,6 +1,6 @@
---[[ Martin Hub // Legends of Speed — v15
-     Full Glass UI, x100 Glow-up, animations, cross-platform.
-     Logic: Batch x30, Auto Hatch, Pet fix, ESP, Teleports. ]]
+--[[ Martin Hub // Legends of Speed — v16
+     NEW: Multi-Orb Selector — pick and stack as many orbs as you want.
+     kept: everything else from v15 (Glass UI, Batch, Pets, ESP, TP). ]]
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -16,7 +16,8 @@ local plr        = Players.LocalPlayer
 local S = {
     speed = 16, jump = 50,
     autoOrb   = false, orbMult = 1,
-    selectedOrb = "Red Orb", selectedMap = "Auto (current)",
+    selectedOrbs = { ["Red Orb"] = true, ["Blue Orb"] = true }, -- Multi-select!
+    selectedMap = "Auto (current)",
     autoHoop    = false, autoRebirth = false,
     autoHatch   = false, selectedCrystal = "Blue Crystal",
     espOrb      = false, espHoop     = false, espPlayer = false,
@@ -139,12 +140,25 @@ local function startOrbLoop()
             resolveRemotes()
             if orbEvent then
                 local world = resolvedMap()
-                local orb   = S.selectedOrb
                 if world then
-                    local calls = math.clamp(S.orbMult * 2, 1, ORB_BUDGET)
-                    for _ = 1, calls do
-                        if not S.autoOrb then break end
-                        fireOrb(orb, world)
+                    -- BUILD THE ACTIVE ORB LIST
+                    local activeOrbs = {}
+                    for orb, active in pairs(S.selectedOrbs) do
+                        if active then table.insert(activeOrbs, orb) end
+                    end
+                    
+                    if #activeOrbs > 0 then
+                        local calls = math.clamp(S.orbMult * 2, 1, ORB_BUDGET)
+                        local orbIndex = 1
+                        
+                        for _ = 1, calls do
+                            if not S.autoOrb then break end
+                            local orbToFire = activeOrbs[orbIndex]
+                            fireOrb(orbToFire, world)
+                            
+                            -- Cycle to next orb in the selected list
+                            orbIndex = (orbIndex % #activeOrbs) + 1
+                        end
                     end
                 end
             end
@@ -785,21 +799,24 @@ end)
 
 -- === PAGE: ORBS ===
 local orbsP = pages["Orbs"]
-AddSection(orbsP, "SELECT ORB")
+AddSection(orbsP, "SELECT ORBS (STACKABLE)")
 local orbButtons = {}
 local function repaintOrbs()
     for name, b in pairs(orbButtons) do
-        local on = (name == S.selectedOrb)
+        local on = S.selectedOrbs[name]
         b.BackgroundColor3 = on and Color3.fromRGB(80, 160, 100) or Color3.fromRGB(30, 30, 38)
-        b.Text = on and ("●  " .. name) or ("   " .. name)
+        b.Text = on and ("[X]  " .. name) or ("[  ]  " .. name)
     end
 end
 for _, orbName in ipairs(ORB_LIST) do
-    local b = AddButton(orbsP, "   " .. orbName, function(btn)
-        S.selectedOrb = orbName; repaintOrbs()
+    local b = AddButton(orbsP, "[  ]  " .. orbName, function(btn)
+        S.selectedOrbs[orbName] = not S.selectedOrbs[orbName]
+        repaintOrbs()
     end)
     b.TextXAlignment = Enum.TextXAlignment.Left; orbButtons[orbName] = b
 end
+repaintOrbs()
+
 AddSection(orbsP, "SELECT MAP")
 local mapButtons = {}
 local function repaintMaps()
@@ -815,7 +832,7 @@ for _, mapName in ipairs(MAP_LIST) do
     end)
     b.TextXAlignment = Enum.TextXAlignment.Left; mapButtons[mapName] = b
 end
-repaintOrbs(); repaintMaps()
+repaintMaps()
 
 -- === PAGE: HATCH ===
 local hatchP = pages["Hatch"]
@@ -979,4 +996,4 @@ closeBtn.MouseButton1Click:Connect(function() fab.MouseButton1Click:Fire() end)
 
 -- === STARTUP ===
 resolveRemotes(); applyStats()
-print("[martin hub] v15 Full Glass UI loaded — tap M to open")
+print("[martin hub] v16 loaded — Multi-Orb stacking active, tap M to open")
