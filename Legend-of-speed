@@ -1,13 +1,11 @@
---[[ Martin Hub // Legends of Speed — v17
-     FIX: Pet equip/unequip now uses the pet object, not the name.
-     FIX: Added "Force Unequip" to clear phantom slots.
-     NEW: Batch limit raised to x50. ]]
+--[[ Martin Hub // Legends of Speed — v19
+     REMOVED: Pets tab, Vis tab (ESP), and all related logic.
+     kept: x50 Batch, Multi-Orb stacking, Auto Hatch, TP, Glass UI. ]]
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local UIS        = game:GetService("UserInputService")
-local CoreGui    = game:GetService("CoreGui")
 local TweenService = game:GetService("TweenService")
 local plr        = Players.LocalPlayer
 
@@ -21,15 +19,13 @@ local S = {
     selectedMap = "Auto (current)",
     autoHoop    = false, autoRebirth = false,
     autoHatch   = false, selectedCrystal = "Blue Crystal",
-    espOrb      = false, espHoop     = false, espPlayer = false,
 }
 
 local SPEED_MAX, JUMP_MAX = 2000, 1000
-local MULT_MAX   = 50 -- x50 Batch Limit
+local MULT_MAX   = 50
 local ORB_TICK   = 0.09
-local ORB_BUDGET = 100 -- Raised so x50 can actually fire
+local ORB_BUDGET = 100
 local HOOP_CHUNK = 30
-local ESP_CAP    = 250
 local SCAN_CAP   = 12000
 local REBIRTH_TICK = 2.0
 local HATCH_TICK   = 0.9
@@ -86,7 +82,6 @@ plr.CharacterAdded:Connect(function(c)
 end)
 
 local orbEvent, rebirthEvent, hatchRemote
-local equipPetEvent, unequipPetEvent
 
 local function resolveRemotes()
     local rEvents = RS:FindFirstChild("rEvents")
@@ -94,7 +89,6 @@ local function resolveRemotes()
     if not orbEvent then orbEvent = rEvents:FindFirstChild("orbEvent") end
     if not rebirthEvent then rebirthEvent = rEvents:FindFirstChild("rebirthEvent") end
     if not hatchRemote then hatchRemote = rEvents:FindFirstChild("openCrystalRemote") end
-    if not equipPetEvent then equipPetEvent = rEvents:FindFirstChild("equipPetEvent") end
 end
 
 local function fireOrb(t, w)
@@ -205,137 +199,6 @@ local function startHatchLoop()
 end
 local function stopHatchLoop() S.autoHatch = false end
 
--- ============================================================
--- FIXED PET LOGIC
--- ============================================================
--- Returns a table of pet names from petsFolder.Unique
-local function listOwnedPets()
-    local names = {}
-    local petsFolder = plr:FindFirstChild("petsFolder")
-    if petsFolder then
-        local unique = petsFolder:FindFirstChild("Unique")
-        if unique then
-            for _, p in ipairs(unique:GetChildren()) do
-                if not table.find(names, p.Name) then table.insert(names, p.Name) end
-            end
-        end
-    end
-    table.sort(names)
-    return names
-end
-
--- Finds the pet object by name and fires equipPet
-local function equipPet(petName)
-    resolveRemotes()
-    if not equipPetEvent then return false end
-    local petsFolder = plr:FindFirstChild("petsFolder")
-    local unique = petsFolder and petsFolder:FindFirstChild("Unique")
-    if not unique then return false end
-
-    for _, pet in ipairs(unique:GetChildren()) do
-        if pet.Name == petName then
-            -- CORRECT PAYLOAD: "equipPet", pet (object)
-            return pcall(function()
-                equipPetEvent:FireServer("equipPet", pet)
-            end)
-        end
-    end
-    return false
-end
-
--- Finds the pet object by name and fires unequipPet
-local function unequipPet(petName)
-    resolveRemotes()
-    if not equipPetEvent then return false end
-    local petsFolder = plr:FindFirstChild("petsFolder")
-    local unique = petsFolder and petsFolder:FindFirstChild("Unique")
-    if not unique then return false end
-
-    for _, pet in ipairs(unique:GetChildren()) do
-        if pet.Name == petName then
-            -- CORRECT PAYLOAD: "unequipPet", pet (object)
-            return pcall(function()
-                equipPetEvent:FireServer("unequipPet", pet)
-            end)
-        end
-    end
-    return false
-end
-
--- Forcefully unequips ALL pets to clear desync slots
-local function forceUnequipAll()
-    resolveRemotes()
-    if not equipPetEvent then return end
-    local petsFolder = plr:FindFirstChild("petsFolder")
-    local unique = petsFolder and petsFolder:FindFirstChild("Unique")
-    if not unique then return end
-
-    for _, pet in ipairs(unique:GetChildren()) do
-        pcall(function()
-            equipPetEvent:FireServer("unequipPet", pet)
-        end)
-        task.wait(0.05) -- Small delay to avoid rate limit
-    end
-end
-
--- ============================================================
--- ESP
--- ============================================================
-local espGui, espEntries = nil, {}
-local function ensureEspGui()
-    if espGui and espGui.Parent then return end
-    local g = Instance.new("ScreenGui")
-    g.Name = "martin_hub_esp"; g.ResetOnSpawn = false; g.IgnoreGuiInset = true
-    local ok = pcall(function() g.Parent = CoreGui end)
-    if not ok or not g.Parent then g.Parent = plr:WaitForChild("PlayerGui") end
-    espGui = g
-end
-local function clearEsp()
-    for _, hl in pairs(espEntries) do pcall(function() hl:Destroy() end) end
-    espEntries = {}
-end
-local function addEsp(inst, color)
-    ensureEspGui()
-    local hl = Instance.new("Highlight")
-    hl.FillColor = color; hl.FillTransparency = 0.65
-    hl.OutlineColor = color; hl.OutlineTransparency = 0
-    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    hl.Adornee = inst; hl.Parent = espGui
-    table.insert(espEntries, hl)
-end
-local function refreshEsp()
-    clearEsp()
-    if not (S.espOrb or S.espHoop or S.espPlayer) then return end
-    local n = 0
-    if S.espOrb then
-        for _, d in ipairs(workspace:GetDescendants()) do
-            if n >= ESP_CAP then break end
-            if d:IsA("BasePart") then
-                local nm = d.Name:lower()
-                if nm:find("orb", 1, true) or nm:find("gem", 1, true) or nm:find("crystal", 1, true) then
-                    addEsp(d, Color3.fromRGB(90, 220, 255)); n += 1
-                end
-            end
-        end
-    end
-    if S.espHoop and n < ESP_CAP then
-        local hoops = workspace:FindFirstChild("Hoops")
-        if hoops then
-            for _, d in ipairs(hoops:GetDescendants()) do
-                if n >= ESP_CAP then break end
-                if d:IsA("BasePart") then addEsp(d, Color3.fromRGB(255, 200, 60)); n += 1 end
-            end
-        end
-    end
-    if S.espPlayer and n < ESP_CAP then
-        for _, p in ipairs(Players:GetPlayers()) do
-            if n >= ESP_CAP then break end
-            if p ~= plr and p.Character then addEsp(p.Character, Color3.fromRGB(255, 80, 110)); n += 1 end
-        end
-    end
-end
-task.spawn(function() while true do task.wait(1.8); pcall(refreshEsp) end end)
-
 local function tpToPart(part)
     local _, _, root = getChar(); if not root or not part then return end
     root.CFrame = part.CFrame + Vector3.new(0, 8, 0)
@@ -368,7 +231,7 @@ local function tpNextStage()
 end
 
 -- ============================================================
--- UI
+-- UI SYSTEM
 -- ============================================================
 local function create(instance, props, children)
     local obj = Instance.new(instance)
@@ -485,7 +348,8 @@ local function showTab(tabName)
     end
 end
 
-local TAB_NAMES = { "Main", "Farm", "Orbs", "Hatch", "Pets", "TP", "Vis" }
+-- Only 5 Tabs Now
+local TAB_NAMES = { "Main", "Farm", "Orbs", "Hatch", "TP" }
 for i, name in ipairs(TAB_NAMES) do
     local btn = create("TextButton", {
         Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = Color3.fromRGB(20, 20, 25),
@@ -728,44 +592,6 @@ customBox.FocusLost:Connect(function()
     if #v > 0 then S.selectedCrystal = v; repaintCrystals() end
 end)
 
--- === PAGE: PETS (Fixed Logic) ===
-local petsP = pages["Pets"]
-AddSection(petsP, "PET CONTROLS")
-
--- The Force Unequip button clears the phantom slot
-AddButton(petsP, "Force Unequip ALL (Fix Slot)", function()
-    forceUnequipAll()
-end)
-
-AddButton(petsP, "Reset Character (Hard Fix)", function()
-    local c = plr.Character; if c then local h = c:FindFirstChildOfClass("Humanoid"); if h then h.Health = 0 end end
-end)
-
-local petContainer = create("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Parent = petsP }, { create("UIListLayout", { Padding = UDim.new(0, 4) }) })
-local function clearPetList() for _, c in ipairs(petContainer:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end end
-local function buildPetList()
-    clearPetList(); local owned = listOwnedPets()
-    for _, name in ipairs(owned) do
-        local row = create("Frame", { Size = UDim2.new(1, 0, 0, 32), BackgroundTransparency = 1, Parent = petContainer })
-        local eq = AddButton(row, "  " .. name, function() equipPet(name) end)
-        eq.Size = UDim2.new(0.6, -2, 1, 0); eq.TextXAlignment = Enum.TextXAlignment.Left
-        local uq = AddButton(row, "unequip", function() unequipPet(name) end)
-        uq.Size = UDim2.new(0.4, -2, 1, 0); uq.Position = UDim2.new(0.6, 0, 0, 0)
-    end
-end
-AddButton(petsP, "Refresh Pet List", buildPetList)
-
-local petBox = create("TextBox", {
-    Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = Color3.fromRGB(20, 20, 25),
-    PlaceholderText = "Custom pet name...", Text = "", TextColor3 = Color3.fromRGB(230, 230, 236),
-    PlaceholderColor3 = Color3.fromRGB(120, 120, 135), Font = Enum.Font.Gotham,
-    TextSize = 12, ClearTextOnFocus = false, Parent = petsP
-}, { create("UICorner", { CornerRadius = UDim.new(0, 8) }), create("UIStroke", { Color = Color3.fromRGB(40, 40, 50), Thickness = 1 }) })
-AddButton(petsP, "Equip Name from Box", function()
-    local v = petBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
-    if #v > 0 then equipPet(v) end
-end)
-
 -- === PAGE: TP ===
 local tpP = pages["TP"]
 AddSection(tpP, "WORLD TELEPORTS")
@@ -775,13 +601,6 @@ for _, w in ipairs(WORLD_TP) do
     end)
 end
 AddButton(tpP, "TP: Next Checkpoint", function() tpNextStage() end)
-
--- === PAGE: VIS ===
-local visP = pages["Vis"]
-AddSection(visP, "VISUALS")
-AddToggle(visP, "ESP Orbs", "espOrb", function() refreshEsp() end)
-AddToggle(visP, "ESP Hoops", "espHoop", function() refreshEsp() end)
-AddToggle(visP, "ESP Players", "espPlayer", function() refreshEsp() end)
 
 -- === WINDOW DRAG LOGIC ===
 local dragging, dragInput, dragStart, startPos
@@ -820,4 +639,4 @@ closeBtn.MouseButton1Click:Connect(function() fab.MouseButton1Click:Fire() end)
 
 -- === STARTUP ===
 resolveRemotes(); applyStats()
-print("[martin hub] v17 loaded — pet slot fix + x50 batch, tap M to open")
+print("[martin hub] v19 loaded — 5 tabs only, tap M to open")
