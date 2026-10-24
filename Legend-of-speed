@@ -1,642 +1,1490 @@
---[[ Martin Hub // Legends of Speed — v19
-     REMOVED: Pets tab, Vis tab (ESP), and all related logic.
-     kept: x50 Batch, Multi-Orb stacking, Auto Hatch, TP, Glass UI. ]]
+--[[ ollie: legends of speed — orb farm v8 (mobile X1000 COOL)
+     tabs · toasts · floating orb bg · blur · snap-drag · minimize
+     session stats · load anim · reduced motion · everything
+     verified remotes + token bucket. exec: any executor. 6767
+]]
 
-local Players    = game:GetService("Players")
-local RS         = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
-local UIS        = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
-local plr        = Players.LocalPlayer
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService  = game:GetService("UserInputService")
+local RunService        = game:GetService("RunService")
+local TweenService      = game:GetService("TweenService")
+local Lighting          = game:GetService("Lighting")
+local CoreGui           = game:GetService("CoreGui")
 
--- ============================================================
--- STATE & CONSTANTS
--- ============================================================
-local S = {
-    speed = 16, jump = 50,
-    autoOrb   = false, orbMult = 1,
-    selectedOrbs = { ["Red Orb"] = true, ["Blue Orb"] = true },
-    selectedMap = "Auto (current)",
-    autoHoop    = false, autoRebirth = false,
-    autoHatch   = false, selectedCrystal = "Blue Crystal",
+local LP = Players.LocalPlayer
+
+-- ============ PALETTE ============
+local C = {
+    bg     = Color3.fromRGB(6,   6,  12),
+    panel  = Color3.fromRGB(12, 12, 20),
+    bar    = Color3.fromRGB(20, 20, 30),
+    pink   = Color3.fromRGB(255, 60, 180),
+    cyan   = Color3.fromRGB(0, 230, 255),
+    purple = Color3.fromRGB(140, 80, 255),
+    gold   = Color3.fromRGB(255, 200, 60),
+    text   = Color3.fromRGB(240, 240, 255),
+    muted  = Color3.fromRGB(130, 130, 165),
+    off    = Color3.fromRGB(28, 28, 40),
+    offHi  = Color3.fromRGB(46, 46, 66),
+    green  = Color3.fromRGB(60, 220, 120),
+}
+-- ================================
+
+-- ============ CONFIG ============
+local Config = {
+    AutoOrb       = false,
+    AntiLag       = true,
+    ReducedMotion = false,
+    OrbRate       = 0.1,
+    OrbBurst      = 30,
+    BucketSize    = 90,
+    BucketRate    = 300,
+    SelectedPlace = "City",
+    SelectedOrbs  = { ["Red Orb"]=true, ["Blue Orb"]=true, ["Yellow Orb"]=true },
 }
 
-local SPEED_MAX, JUMP_MAX = 2000, 1000
-local MULT_MAX   = 50
-local ORB_TICK   = 0.09
-local ORB_BUDGET = 100
-local HOOP_CHUNK = 30
-local SCAN_CAP   = 12000
-local REBIRTH_TICK = 2.0
-local HATCH_TICK   = 0.9
-
-local ORB_LIST = {
-    "Red Orb", "Blue Orb", "Yellow Orb", "Orange Orb",
-    "Green Orb", "Purple Orb", "Ethereal Orb", "Gem", "Crystal",
+local PLACE_NAMES = {
+    "City", "Desert", "Magma City", "Snow City", "Universe",
+    "Electric Cave", "Jungle Cave",
 }
-local MAP_LIST = {
-    "Auto (current)", "City", "Snow City", "Magma City",
-    "Speed Desert", "Speed Jungle", "Outer Space",
-    "Electro Cave", "Legends Highway",
-}
-local WORLD_TP = {
-    "City", "Snow City", "Magma City", "Speed Desert",
-    "Speed Jungle", "Legends Highway", "Outer Space", "Electro Cave",
-}
-local CRYSTALS = {
-    { name = "Red Crystal",            cost = 300 },
-    { name = "Blue Crystal",           cost = 600 },
-    { name = "Purple Crystal",         cost = 1000 },
-    { name = "Yellow Crystal",         cost = 1200 },
-    { name = "Lightning Crystal",      cost = 2500 },
-    { name = "Snow Crystal",           cost = 4000 },
-    { name = "Lava Crystal",           cost = 8000 },
-    { name = "Inferno Crystal",        cost = 8000 },
-    { name = "Space Crystal",          cost = 15000 },
-    { name = "Alien Crystal",          cost = 25000 },
-    { name = "Electro Crystal",        cost = 50000 },
-    { name = "Electro Legends Crystal",cost = 100000 },
+local PLACE_ORBS = {
+    ["City"]          = { "Gem", "Red Orb", "Blue Orb", "Yellow Orb", "Purple Orb" },
+    ["Desert"]        = { "Gem", "Red Orb", "Blue Orb", "Yellow Orb", "Purple Orb" },
+    ["Magma City"]    = { "Ethereal Orb", "Red Orb", "Blue Orb", "Purple Orb" },
+    ["Snow City"]     = { "Gem", "Red Orb", "Blue Orb", "Yellow Orb" },
+    ["Universe"]      = { "Green Orb", "Orange Orb", "Ethereal Orb" },
+    ["Electric Cave"] = { "Gem", "Red Orb", "Purple Orb", "Ethereal Orb" },
+    ["Jungle Cave"]   = { "Gem", "Blue Orb", "Yellow Orb", "Ethereal Orb" },
 }
 
--- ============================================================
--- HELPERS
--- ============================================================
-local function getChar()
-    local c = plr.Character
-    if not c or not c.Parent then return nil end
-    local h = c:FindFirstChildOfClass("Humanoid")
-    if not h or h.Health <= 0 then return nil end
-    return c, h, c:FindFirstChild("HumanoidRootPart")
-end
-local function applyStats()
-    local _, h = getChar()
-    if not h then return end
-    h.WalkSpeed = S.speed
-    h.UseJumpPower = true
-    h.JumpPower = S.jump
-end
-plr.CharacterAdded:Connect(function(c)
-    c:WaitForChild("Humanoid", 10)
-    task.wait(0.25)
-    applyStats()
-end)
+local Stats = { orbsFired = 0, startTime = os.clock() }
+-- ================================
 
-local orbEvent, rebirthEvent, hatchRemote
+-- ============ REMOTES ============
+local rEvents = ReplicatedStorage:WaitForChild("rEvents", 20)
+if not rEvents then warn("[ollie] rEvents missing") return end
+local orbEvent = rEvents:WaitForChild("orbEvent", 15)
+if not orbEvent then warn("[ollie] orbEvent missing") return end
+-- ================================
 
-local function resolveRemotes()
-    local rEvents = RS:FindFirstChild("rEvents")
-    if not rEvents then return end
-    if not orbEvent then orbEvent = rEvents:FindFirstChild("orbEvent") end
-    if not rebirthEvent then rebirthEvent = rEvents:FindFirstChild("rebirthEvent") end
-    if not hatchRemote then hatchRemote = rEvents:FindFirstChild("openCrystalRemote") end
+-- ============ TOKEN BUCKET ============
+local Bucket = { tokens = Config.BucketSize, lastRefill = os.clock() }
+local function refillBucket()
+    local now = os.clock()
+    local dt = now - Bucket.lastRefill
+    Bucket.lastRefill = now
+    Bucket.tokens = math.min(Config.BucketSize, Bucket.tokens + Config.BucketRate * dt)
 end
-
-local function fireOrb(t, w)
-    if not orbEvent then return false end
-    return pcall(function() orbEvent:FireServer("collectOrb", t, w) end)
+local function spendTokens(n)
+    refillBucket()
+    local allowed = math.min(n, math.floor(Bucket.tokens))
+    Bucket.tokens -= allowed
+    return allowed
 end
+RunService.Heartbeat:Connect(refillBucket)
+-- ================================
 
--- ============================================================
--- FARMING LOOPS
--- ============================================================
-local orbTask = nil
-local function resolvedMap()
-    if S.selectedMap == "Auto (current)" then
-        local ok, map = pcall(function()
-            local v = plr:FindFirstChild("currentMap")
-            if v and v:IsA("StringValue") then return v.Value end
-        end)
-        if ok and type(map) == "string" and #map > 0 then return map end
-        return nil
+-- ============ HELPERS ============
+local function getHum()
+    local c = LP.Character
+    return c and c:FindFirstChildOfClass("Humanoid")
+end
+local function getActiveOrbs()
+    local pool = PLACE_ORBS[Config.SelectedPlace] or {}
+    local out = {}
+    for _, o in ipairs(pool) do
+        if Config.SelectedOrbs[o] then table.insert(out, o) end
     end
-    return S.selectedMap
+    return out
 end
-local function startOrbLoop()
-    if orbTask then return end
-    orbTask = task.spawn(function()
-        while S.autoOrb do
-            resolveRemotes()
-            if orbEvent then
-                local world = resolvedMap()
-                if world then
-                    local activeOrbs = {}
-                    for orb, active in pairs(S.selectedOrbs) do
-                        if active then table.insert(activeOrbs, orb) end
-                    end
-                    if #activeOrbs > 0 then
-                        local calls = math.clamp(S.orbMult * 2, 1, ORB_BUDGET)
-                        local orbIndex = 1
-                        for _ = 1, calls do
-                            if not S.autoOrb then break end
-                            fireOrb(activeOrbs[orbIndex], world)
-                            orbIndex = (orbIndex % #activeOrbs) + 1
-                        end
-                    end
-                end
+-- ================================
+
+-- ============ HOOKS for UI feedback (set by GUI build) ============
+local Hooks = { onFire = nil, onFlash = nil, onToast = nil }
+-- ================================
+
+-- ============ FIRE ============
+local function fireOrbs()
+    local place = Config.SelectedPlace
+    local orbs  = getActiveOrbs()
+    if #orbs == 0 then return end
+    local totalFired = 0
+    for _, orb in ipairs(orbs) do
+        local want = Config.OrbBurst
+        while want > 0 do
+            local allowed = spendTokens(want)
+            if allowed <= 0 then task.wait(0.02) break end
+            for _ = 1, allowed do
+                orbEvent:FireServer("collectOrb", orb, place)
             end
-            task.wait(ORB_TICK)
-        end
-        orbTask = nil
-    end)
-end
-local function stopOrbLoop() S.autoOrb = false end
-
-local hoopTask = nil
-local function startHoopLoop()
-    if hoopTask then return end
-    hoopTask = task.spawn(function()
-        while S.autoHoop do
-            local _, _, root = getChar()
-            if root then
-                local hoops = workspace:FindFirstChild("Hoops")
-                if hoops then
-                    local moved = 0
-                    for _, v in ipairs(hoops:GetChildren()) do
-                        if moved >= HOOP_CHUNK or not S.autoHoop then break end
-                        if v:IsA("BasePart") then
-                            pcall(function() v.CFrame = root.CFrame end)
-                            moved += 1
-                        end
-                    end
-                end
-            end
-            task.wait(0.12)
-        end
-        hoopTask = nil
-    end)
-end
-local function stopHoopLoop() S.autoHoop = false end
-
-local rebirthTask = nil
-local function startRebirthLoop()
-    if rebirthTask then return end
-    rebirthTask = task.spawn(function()
-        while S.autoRebirth do
-            resolveRemotes()
-            if rebirthEvent then
-                pcall(function() rebirthEvent:FireServer("rebirthRequest") end)
-            end
-            task.wait(REBIRTH_TICK)
-        end
-        rebirthTask = nil
-    end)
-end
-local function stopRebirthLoop() S.autoRebirth = false end
-
-local hatchTask = nil
-local function startHatchLoop()
-    if hatchTask then return end
-    hatchTask = task.spawn(function()
-        while S.autoHatch do
-            resolveRemotes()
-            if hatchRemote then
-                pcall(function() hatchRemote:InvokeServer("openCrystal", S.selectedCrystal) end)
-            end
-            task.wait(HATCH_TICK)
-        end
-        hatchTask = nil
-    end)
-end
-local function stopHatchLoop() S.autoHatch = false end
-
-local function tpToPart(part)
-    local _, _, root = getChar(); if not root or not part then return end
-    root.CFrame = part.CFrame + Vector3.new(0, 8, 0)
-    root.AssemblyLinearVelocity = Vector3.zero
-end
-local function tpToWorld(name)
-    local n = 0
-    for _, d in ipairs(workspace:GetDescendants()) do
-        n += 1; if n > SCAN_CAP then break end
-        if d:IsA("BasePart") and d.Name:lower():find(name:lower(), 1, true) then
-            tpToPart(d); return true
+            totalFired += allowed
+            want -= allowed
+            if Config.AntiLag and allowed >= 10 then task.wait() end
         end
     end
-    return false
-end
-local function tpNextStage()
-    local _, _, root = getChar(); if not root then return end
-    local best, bestD, n = nil, math.huge, 0
-    for _, d in ipairs(workspace:GetDescendants()) do
-        n += 1; if n > SCAN_CAP then break end
-        if d:IsA("BasePart") then
-            local nm = d.Name:lower()
-            if nm:find("checkpoint",1,true) or nm:find("stage",1,true) or nm:find("finish",1,true) or nm:find("portal",1,true) then
-                local dist = (d.Position - root.Position).Magnitude
-                if dist > 10 and dist < bestD then best, bestD = d, dist end
-            end
-        end
-    end
-    if best then tpToPart(best) end
-end
-
--- ============================================================
--- UI SYSTEM
--- ============================================================
-local function create(instance, props, children)
-    local obj = Instance.new(instance)
-    for k, v in pairs(props) do obj[k] = v end
-    if children then for _, c in pairs(children) do c.Parent = obj end end
-    return obj
-end
-
-local gui = create("ScreenGui", {
-    Name = "MartinHub_Glass",
-    ResetOnSpawn = false,
-    DisplayOrder = 999,
-    Parent = plr:WaitForChild("PlayerGui")
-})
-
-local function tween(obj, time, style, dir, goal)
-    TweenService:Create(obj, TweenInfo.new(time or 0.2, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out), goal):Play()
-end
-
-local fab = create("TextButton", {
-    Size = UDim2.new(0, 50, 0, 50),
-    Position = UDim2.new(0, 20, 0, 80),
-    BackgroundColor3 = Color3.fromRGB(20, 20, 25),
-    Text = "M", TextColor3 = Color3.fromRGB(255, 255, 255),
-    Font = Enum.Font.GothamBlack, TextSize = 24, AutoButtonColor = false,
-    Parent = gui
-}, {
-    create("UICorner", { CornerRadius = UDim.new(1, 0) }),
-    create("UIStroke", { Color = Color3.fromRGB(100, 200, 255), Thickness = 2 }),
-    create("UIGradient", { Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(100, 200, 255)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 100, 255))
-    })})
-})
-
-local main = create("Frame", {
-    Size = UDim2.new(0, 480, 0, 320),
-    Position = UDim2.new(0.5, -240, 0.5, -160),
-    BackgroundColor3 = Color3.fromRGB(15, 15, 20),
-    BackgroundTransparency = 0.1, Visible = false, Parent = gui
-}, {
-    create("UICorner", { CornerRadius = UDim.new(0, 16) }),
-    create("UIStroke", { Color = Color3.fromRGB(60, 60, 70), Thickness = 1.5 })
-})
-
-create("ImageLabel", {
-    Size = UDim2.new(1, 40, 1, 40), Position = UDim2.new(0, -20, 0, -20),
-    BackgroundTransparency = 1, Image = "rbxassetid://1316045217",
-    ImageColor3 = Color3.new(0, 0, 0), ImageTransparency = 0.6,
-    ScaleType = Enum.ScaleType.Slice, SliceCenter = Rect.new(10, 10, 118, 118),
-    ZIndex = 0, Parent = main
-})
-
-local header = create("Frame", { Size = UDim2.new(1, 0, 0, 50), BackgroundTransparency = 1, ZIndex = 1, Parent = main })
-
-local title = create("TextLabel", {
-    Size = UDim2.new(1, -60, 1, 0), Position = UDim2.new(0, 20, 0, 0),
-    BackgroundTransparency = 1, Text = "MARTIN HUB // GLASS",
-    TextColor3 = Color3.fromRGB(255, 255, 255), Font = Enum.Font.GothamBold,
-    TextSize = 18, TextXAlignment = Enum.TextXAlignment.Left, Parent = header
-}, {
-    create("UIGradient", { Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(100, 200, 255)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 100, 255))
-    })})
-})
-
-local closeBtn = create("TextButton", {
-    Size = UDim2.new(0, 30, 0, 30), Position = UDim2.new(1, -45, 0.5, -15),
-    BackgroundColor3 = Color3.fromRGB(255, 80, 80), Text = "X",
-    TextColor3 = Color3.new(1, 1, 1), Font = Enum.Font.GothamBold, TextSize = 14,
-    AutoButtonColor = false, Parent = header
-}, { create("UICorner", { CornerRadius = UDim.new(0, 8) }) })
-
-create("Frame", {
-    Size = UDim2.new(1, -40, 0, 1), Position = UDim2.new(0, 20, 0, 50),
-    BackgroundColor3 = Color3.fromRGB(60, 60, 70), Parent = main
-})
-
-local sidebar = create("Frame", {
-    Size = UDim2.new(0, 100, 1, -80), Position = UDim2.new(0, 10, 0, 60),
-    BackgroundTransparency = 1, Parent = main
-}, { create("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }) })
-
-local content = create("Frame", {
-    Size = UDim2.new(1, -130, 1, -80), Position = UDim2.new(0, 120, 0, 60),
-    BackgroundTransparency = 1, Parent = main
-})
-
-local pages = {}
-local tabButtons = {}
-local currentTab = ""
-
-local function showTab(tabName)
-    if currentTab == tabName then return end
-    currentTab = tabName
-    for name, page in pairs(pages) do
-        if name == tabName then
-            page.Visible = true
-            page.Position = UDim2.new(0, 10, 0, 0)
-            tween(page, 0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, { Position = UDim2.new(0, 0, 0, 0) })
-        else
-            page.Visible = false
-        end
-    end
-    for name, btn in pairs(tabButtons) do
-        if name == tabName then
-            tween(btn, 0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, { BackgroundColor3 = Color3.fromRGB(40, 40, 50), TextColor3 = Color3.fromRGB(255, 255, 255) })
-            btn.UIStroke.Color = Color3.fromRGB(100, 200, 255)
-        else
-            tween(btn, 0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, { BackgroundColor3 = Color3.fromRGB(20, 20, 25), TextColor3 = Color3.fromRGB(150, 150, 160) })
-            btn.UIStroke.Color = Color3.fromRGB(50, 50, 60)
-        end
+    Stats.orbsFired += totalFired
+    if Hooks.onFire and totalFired > 0 then
+        Hooks.onFire(totalFired, orbs)
     end
 end
-
--- Only 5 Tabs Now
-local TAB_NAMES = { "Main", "Farm", "Orbs", "Hatch", "TP" }
-for i, name in ipairs(TAB_NAMES) do
-    local btn = create("TextButton", {
-        Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = Color3.fromRGB(20, 20, 25),
-        Text = name, TextColor3 = Color3.fromRGB(150, 150, 160),
-        Font = Enum.Font.GothamMedium, TextSize = 13, AutoButtonColor = false,
-        LayoutOrder = i, Parent = sidebar
-    }, {
-        create("UICorner", { CornerRadius = UDim.new(0, 8) }),
-        create("UIStroke", { Color = Color3.fromRGB(50, 50, 60), Thickness = 1 })
-    })
-    
-    btn.MouseEnter:Connect(function() tween(btn, 0.1, nil, nil, { BackgroundColor3 = Color3.fromRGB(30, 30, 40) }) end)
-    btn.MouseLeave:Connect(function() if currentTab ~= name then tween(btn, 0.1, nil, nil, { BackgroundColor3 = Color3.fromRGB(20, 20, 25) }) end end)
-    btn.MouseButton1Click:Connect(function() showTab(name) end)
-    tabButtons[name] = btn
-
-    local page = create("ScrollingFrame", {
-        Name = name .. "Page", Size = UDim2.new(1, 0, 1, 0),
-        BackgroundTransparency = 1, BorderSizePixel = 0,
-        ScrollBarThickness = 2, ScrollBarImageColor3 = Color3.fromRGB(100, 200, 255),
-        CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-        Visible = false, Parent = content
-    }, { create("UIListLayout", { Padding = UDim.new(0, 6) }) })
-    pages[name] = page
-end
-
-local function AddSection(parent, text)
-    create("TextLabel", {
-        Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1, Text = text,
-        TextColor3 = Color3.fromRGB(120, 120, 135), Font = Enum.Font.GothamBold,
-        TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Parent = parent
-    })
-end
-
-local function AddToggle(parent, text, key, callback)
-    local frame = create("Frame", {
-        Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = Color3.fromRGB(20, 20, 25),
-        Parent = parent
-    }, {
-        create("UICorner", { CornerRadius = UDim.new(0, 8) }),
-        create("UIStroke", { Color = Color3.fromRGB(40, 40, 50), Thickness = 1 })
-    })
-    
-    create("TextLabel", {
-        Size = UDim2.new(1, -60, 1, 0), Position = UDim2.new(0, 12, 0, 0),
-        BackgroundTransparency = 1, Text = text, TextColor3 = Color3.fromRGB(220, 220, 230),
-        Font = Enum.Font.Gotham, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, Parent = frame
-    })
-    
-    local track = create("Frame", {
-        Size = UDim2.new(0, 36, 0, 20), Position = UDim2.new(1, -48, 0.5, -10),
-        BackgroundColor3 = Color3.fromRGB(50, 50, 60), Parent = frame
-    }, { create("UICorner", { CornerRadius = UDim.new(1, 0) }) })
-    
-    local thumb = create("Frame", {
-        Size = UDim2.new(0, 16, 0, 16), Position = UDim2.new(0, 2, 0.5, -8),
-        BackgroundColor3 = Color3.fromRGB(200, 200, 210), Parent = track
-    }, { create("UICorner", { CornerRadius = UDim.new(1, 0) }) })
-    
-    local btn = create("TextButton", {
-        Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", Parent = frame
-    })
-    
-    local function UpdateState(on)
-        S[key] = on
-        if on then
-            tween(track, 0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, { BackgroundColor3 = Color3.fromRGB(100, 200, 255) })
-            tween(thumb, 0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, { Position = UDim2.new(1, -18, 0.5, -8), BackgroundColor3 = Color3.fromRGB(255, 255, 255) })
-        else
-            tween(track, 0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, { BackgroundColor3 = Color3.fromRGB(50, 50, 60) })
-            tween(thumb, 0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, { Position = UDim2.new(0, 2, 0.5, -8), BackgroundColor3 = Color3.fromRGB(200, 200, 210) })
-        end
-        if callback then callback(on) end
-    end
-    
-    btn.MouseButton1Click:Connect(function() UpdateState(not S[key]) end)
-    UpdateState(S[key])
-end
-
-local function AddButton(parent, text, callback)
-    local btn = create("TextButton", {
-        Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = Color3.fromRGB(30, 30, 38),
-        Text = text, TextColor3 = Color3.fromRGB(220, 220, 230),
-        Font = Enum.Font.Gotham, TextSize = 13, AutoButtonColor = false, Parent = parent
-    }, {
-        create("UICorner", { CornerRadius = UDim.new(0, 8) }),
-        create("UIStroke", { Color = Color3.fromRGB(50, 50, 60), Thickness = 1 })
-    })
-    
-    btn.MouseEnter:Connect(function() tween(btn, 0.1, nil, nil, { BackgroundColor3 = Color3.fromRGB(45, 45, 55) }) end)
-    btn.MouseLeave:Connect(function() tween(btn, 0.1, nil, nil, { BackgroundColor3 = Color3.fromRGB(30, 30, 38) }) end)
-    btn.MouseButton1Click:Connect(function()
-        tween(btn, 0.1, nil, nil, { BackgroundColor3 = Color3.fromRGB(80, 160, 100) })
-        task.delay(0.15, function() tween(btn, 0.2, nil, nil, { BackgroundColor3 = Color3.fromRGB(30, 30, 38) }) end)
-        if callback then callback(btn) end
-    end)
-    return btn
-end
-
--- === PAGE: MAIN ===
-local mainP = pages["Main"]
-AddSection(mainP, "PLAYER STATS")
-AddButton(mainP, "Speed: 16", function(b)
-    S.speed = (S.speed >= SPEED_MAX) and 16 or math.min(S.speed + 60, SPEED_MAX)
-    b.Text = "Speed: " .. S.speed; applyStats()
-end)
-AddButton(mainP, "Jump: 50", function(b)
-    S.jump = (S.jump >= JUMP_MAX) and 50 or math.min(S.jump + 60, JUMP_MAX)
-    b.Text = "Jump: " .. S.jump; applyStats()
-end)
-
--- === PAGE: FARM ===
-local farmP = pages["Farm"]
-AddSection(farmP, "AUTOMATION")
-AddToggle(farmP, "Auto Orb", "autoOrb", function(on) if on then startOrbLoop() else stopOrbLoop() end end)
-AddToggle(farmP, "Hoop Magnet", "autoHoop", function(on) if on then startHoopLoop() else stopHoopLoop() end end)
-AddToggle(farmP, "Auto Rebirth", "autoRebirth", function(on) if on then resolveRemotes(); startRebirthLoop() else stopRebirthLoop() end end)
-
-AddSection(farmP, "BATCH SETTINGS")
-local batchFrame = create("Frame", {
-    Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = Color3.fromRGB(20, 20, 25), Parent = farmP
-}, {
-    create("UICorner", { CornerRadius = UDim.new(0, 8) }),
-    create("UIStroke", { Color = Color3.fromRGB(40, 40, 50), Thickness = 1 })
-})
-
-local batchBtn = create("TextButton", {
-    Size = UDim2.new(0.5, -4, 1, 0), BackgroundTransparency = 1,
-    Text = "Batch: x1", TextColor3 = Color3.fromRGB(220, 220, 230),
-    Font = Enum.Font.Gotham, TextSize = 13, Parent = batchFrame
-})
-
-local batchBox = create("TextBox", {
-    Size = UDim2.new(0.5, -4, 1, 0), Position = UDim2.new(0.5, 4, 0, 0),
-    BackgroundColor3 = Color3.fromRGB(30, 30, 38), TextColor3 = Color3.fromRGB(255, 255, 255),
-    Font = Enum.Font.Gotham, TextSize = 13, PlaceholderText = "1-50", Text = "1", Parent = batchFrame
-}, { create("UICorner", { CornerRadius = UDim.new(0, 6) }) })
-
-batchBtn.MouseButton1Click:Connect(function()
-    S.orbMult = (S.orbMult >= MULT_MAX) and 1 or (S.orbMult + 1)
-    batchBtn.Text = "Batch: x" .. S.orbMult
-    batchBox.Text = tostring(S.orbMult)
-end)
-
-batchBox.FocusLost:Connect(function()
-    local num = tonumber(batchBox.Text)
-    if num then S.orbMult = math.clamp(math.floor(num), 1, MULT_MAX) else S.orbMult = 1 end
-    batchBtn.Text = "Batch: x" .. S.orbMult
-    batchBox.Text = tostring(S.orbMult)
-end)
-
--- === PAGE: ORBS ===
-local orbsP = pages["Orbs"]
-AddSection(orbsP, "SELECT ORBS (STACKABLE)")
-local orbButtons = {}
-local function repaintOrbs()
-    for name, b in pairs(orbButtons) do
-        local on = S.selectedOrbs[name]
-        b.BackgroundColor3 = on and Color3.fromRGB(80, 160, 100) or Color3.fromRGB(30, 30, 38)
-        b.Text = on and ("[X]  " .. name) or ("[  ]  " .. name)
-    end
-end
-for _, orbName in ipairs(ORB_LIST) do
-    local b = AddButton(orbsP, "[  ]  " .. orbName, function(btn)
-        S.selectedOrbs[orbName] = not S.selectedOrbs[orbName]
-        repaintOrbs()
-    end)
-    b.TextXAlignment = Enum.TextXAlignment.Left; orbButtons[orbName] = b
-end
-repaintOrbs()
-
-AddSection(orbsP, "SELECT MAP")
-local mapButtons = {}
-local function repaintMaps()
-    for name, b in pairs(mapButtons) do
-        local on = (name == S.selectedMap)
-        b.BackgroundColor3 = on and Color3.fromRGB(80, 160, 100) or Color3.fromRGB(30, 30, 38)
-        b.Text = on and ("●  " .. name) or ("   " .. name)
-    end
-end
-for _, mapName in ipairs(MAP_LIST) do
-    local b = AddButton(orbsP, "   " .. mapName, function(btn)
-        S.selectedMap = mapName; repaintMaps()
-    end)
-    b.TextXAlignment = Enum.TextXAlignment.Left; mapButtons[mapName] = b
-end
-repaintMaps()
-
--- === PAGE: HATCH ===
-local hatchP = pages["Hatch"]
-AddSection(hatchP, "GEM COUNTER")
-local gemsLbl = create("TextLabel", {
-    Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = Color3.fromRGB(20, 30, 25),
-    Text = "  💎 Gems: loading...", TextColor3 = Color3.fromRGB(150, 240, 220),
-    Font = Enum.Font.GothamBold, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, Parent = hatchP
-}, { create("UICorner", { CornerRadius = UDim.new(0, 8) }), create("UIStroke", { Color = Color3.fromRGB(50, 100, 80), Thickness = 1 }) })
 
 task.spawn(function()
     while true do
-        task.wait(0.5)
-        local val = 0
-        local ls = plr:FindFirstChild("leaderstats")
-        if ls then
-            local g = ls:FindFirstChild("Gems") or ls:FindFirstChild("Diamonds")
-            if g then val = g.Value end
+        if Config.AutoOrb and getHum() then pcall(fireOrbs) end
+        task.wait(Config.OrbRate)
+    end
+end)
+-- ================================
+
+-- ============ UI UTILITIES ============
+local function tween(inst, props, dur, style, dir, cb)
+    local t = TweenService:Create(inst,
+        TweenInfo.new(dur or 0.2,
+            style or Enum.EasingStyle.Quad,
+            dir or Enum.EasingDirection.Out),
+        props)
+    t:Play()
+    if cb then t.Completed:Connect(cb) end
+    return t
+end
+local function corner(inst, r)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, r or 6)
+    c.Parent = inst
+    return c
+end
+local function stroke(inst, color, thick, trans)
+    local s = Instance.new("UIStroke")
+    s.Color = color or C.cyan
+    s.Thickness = thick or 1
+    s.Transparency = trans or 0.4
+    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    s.Parent = inst
+    return s
+end
+local function grad(inst, a, b, rot)
+    local g = Instance.new("UIGradient")
+    g.Color = ColorSequence.new(a, b)
+    g.Rotation = rot or 0
+    g.Parent = inst
+    return g
+end
+local function ripple(btn, color)
+    btn.ClipsDescendants = true
+    btn.MouseButton1Down:Connect(function()
+        local mouse = UserInputService:GetMouseLocation()
+        local rel = mouse - btn.AbsolutePosition
+        local r = Instance.new("Frame")
+        r.AnchorPoint = Vector2.new(0.5, 0.5)
+        r.Size = UDim2.new(0, 0, 0, 0)
+        r.Position = UDim2.new(0, rel.X, 0, rel.Y)
+        r.BackgroundColor3 = color or Color3.new(1, 1, 1)
+        r.BackgroundTransparency = 0.5
+        r.BorderSizePixel = 0
+        r.ZIndex = 20
+        r.Parent = btn
+        Instance.new("UICorner", r).CornerRadius = UDim.new(1, 0)
+        tween(r, { Size = UDim2.new(0, 340, 0, 340), BackgroundTransparency = 1 },
+            0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out,
+            function() r:Destroy() end)
+    end)
+end
+local function hover(btn, normal, hi)
+    btn.BackgroundColor3 = normal
+    btn.MouseEnter:Connect(function() tween(btn, { BackgroundColor3 = hi }, 0.15) end)
+    btn.MouseLeave:Connect(function() tween(btn, { BackgroundColor3 = normal }, 0.2) end)
+end
+local function tapPulse(btn)
+    -- simulate haptic via brightness flash on tap
+    local orig = btn.BackgroundTransparency
+    btn.MouseButton1Down:Connect(function()
+        btn.BackgroundTransparency = math.max(0, orig - 0.3)
+    end)
+    btn.MouseButton1Up:Connect(function()
+        tween(btn, { BackgroundTransparency = orig }, 0.2)
+    end)
+end
+local function pulse(s, on)
+    if on then
+        return TweenService:Create(s,
+            TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+            { Transparency = 0.8 })
+    end
+end
+local function divider(parent, y, w)
+    local d = Instance.new("Frame")
+    d.Size = UDim2.new(1, w or -20, 0, 1)
+    d.Position = UDim2.new(0, 10, 0, y)
+    d.BorderSizePixel = 0
+    d.BackgroundColor3 = Color3.new(1, 1, 1)
+    d.BackgroundTransparency = 1
+    d.Parent = parent
+    grad(d, C.pink, C.cyan, 0)
+    return d
+end
+local function sectionLabel(parent, text, y)
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(1, -20, 0, 16)
+    l.Position = UDim2.new(0, 10, 0, y)
+    l.BackgroundTransparency = 1
+    l.Text = "▸ " .. text
+    l.TextColor3 = C.muted
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.Font = Enum.Font.GothamBold
+    l.TextSize = 10
+    l.ZIndex = 6
+    l.Parent = parent
+    return l
+end
+-- ================================
+
+-- ============ GUI ============
+local GUI, Main, MinimizeOrb, Blur
+local RefreshOrbList
+local currentTab = "FARM"
+local tabContents = {}
+local toastQueue = {}
+
+local function buildGUI()
+    if GUI then GUI:Destroy() end
+    GUI = Instance.new("ScreenGui")
+    GUI.Name = "ollie_los_v8_mobile"
+    GUI.ResetOnSpawn = false
+    GUI.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    GUI.DisplayOrder = 999
+    pcall(function() GUI.Parent = CoreGui end)
+    if not GUI.Parent then GUI.Parent = LP:WaitForChild("PlayerGui") end
+
+    -- Blur behind the panel (mobile-depth illusion)
+    Blur = Instance.new("BlurEffect")
+    Blur.Size = 0
+    Blur.Parent = Lighting
+
+    -- ============== ROOT + UIScale ==============
+    Main = Instance.new("Frame")
+    Main.Size = UDim2.new(0, 340, 0, 680)
+    Main.Position = UDim2.new(0.5, -170, 0.5, -340)
+    Main.BackgroundColor3 = C.panel
+    Main.BorderSizePixel = 0
+    Main.Active = true
+    Main.ClipsDescendants = true
+    Main.ZIndex = 2
+    Main.Parent = GUI
+    corner(Main, 14)
+    local mainStroke = stroke(Main, C.cyan, 1.5, 0.55)
+
+    -- layered background gradients
+    local bgTop = Instance.new("Frame")
+    bgTop.Size = UDim2.new(1, 0, 1, 0)
+    bgTop.BackgroundColor3 = Color3.new(1, 1, 1)
+    bgTop.BackgroundTransparency = 0.92
+    bgTop.BorderSizePixel = 0
+    bgTop.ZIndex = 1
+    bgTop.Parent = Main
+    corner(bgTop, 14)
+    local bgGrad = grad(bgTop, C.purple, C.pink, 45)
+
+    -- animated floating orb layer (behind everything)
+    local orbBG = Instance.new("Frame")
+    orbBG.Size = UDim2.new(1, 0, 1, 0)
+    orbBG.BackgroundTransparency = 1
+    orbBG.ClipsDescendants = true
+    orbBG.ZIndex = 1
+    orbBG.Parent = Main
+    corner(orbBG, 14)
+
+    local function spawnFloatingOrb()
+        if Config.ReducedMotion or not orbBG or not orbBG.Parent then return end
+        local sz = math.random(4, 10)
+        local orb = Instance.new("Frame")
+        orb.Size = UDim2.new(0, sz, 0, sz)
+        orb.Position = UDim2.new(math.random(5, 95) / 100, 0, 1.05, 0)
+        orb.BackgroundColor3 = (math.random() > 0.5) and C.pink or C.cyan
+        orb.BackgroundTransparency = 0.15
+        orb.BorderSizePixel = 0
+        orb.ZIndex = 1
+        orb.Parent = orbBG
+        Instance.new("UICorner", orb).CornerRadius = UDim.new(1, 0)
+        local glow = stroke(orb, orb.BackgroundColor3, 3, 0.6)
+        local dur = math.random(60, 120) / 10
+        local drift = math.random(-25, 25) / 100
+        TweenService:Create(orb,
+            TweenInfo.new(dur, Enum.EasingStyle.Linear),
+            {
+                Position = UDim2.new(orb.Position.X.Scale + drift, 0, -0.10, 0),
+                BackgroundTransparency = 1,
+            }
+        ):Play()
+        TweenService:Create(glow,
+            TweenInfo.new(dur, Enum.EasingStyle.Linear),
+            { Transparency = 1 }
+        ):Play()
+        task.delay(dur, function() if orb and orb.Parent then orb:Destroy() end end)
+    end
+
+    task.spawn(function()
+        while orbBG and orbBG.Parent do
+            spawnFloatingOrb()
+            task.wait(math.random(6, 14) / 10)
         end
-        gemsLbl.Text = string.format("  💎 Gems: %s", tostring(val))
-        gemsLbl.TextColor3 = val == 0 and Color3.fromRGB(220,100,100) or Color3.fromRGB(150,240,220)
-    end
-end)
-
-AddToggle(hatchP, "Auto Hatch", "autoHatch", function(on) if on then resolveRemotes(); startHatchLoop() else stopHatchLoop() end end)
-
-AddSection(hatchP, "SELECT CRYSTAL")
-local crystalButtons = {}
-local function repaintCrystals()
-    for name, b in pairs(crystalButtons) do
-        local on = (name == S.selectedCrystal)
-        b.BackgroundColor3 = on and Color3.fromRGB(80, 160, 100) or Color3.fromRGB(30, 30, 38)
-        b.Text = on and ("●  " .. name) or ("   " .. name)
-    end
-end
-for _, crystal in ipairs(CRYSTALS) do
-    local b = AddButton(hatchP, string.format("   %s  —  %s 💎", crystal.name, tostring(crystal.cost)), function(btn)
-        S.selectedCrystal = crystal.name; repaintCrystals()
     end)
-    b.TextXAlignment = Enum.TextXAlignment.Left
-    crystalButtons[crystal.name] = b
-end
-repaintCrystals()
 
-local customBox = create("TextBox", {
-    Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = Color3.fromRGB(20, 20, 25),
-    PlaceholderText = "Custom crystal name...", Text = "", TextColor3 = Color3.fromRGB(230, 230, 236),
-    PlaceholderColor3 = Color3.fromRGB(120, 120, 135), Font = Enum.Font.Gotham,
-    TextSize = 12, ClearTextOnFocus = false, Parent = hatchP
-}, { create("UICorner", { CornerRadius = UDim.new(0, 8) }), create("UIStroke", { Color = Color3.fromRGB(40, 40, 50), Thickness = 1 }) })
-customBox.FocusLost:Connect(function()
-    local v = customBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
-    if #v > 0 then S.selectedCrystal = v; repaintCrystals() end
-end)
+    -- UIScale responsive
+    local design = Vector2.new(360, 720)
+    local uiScale = Instance.new("UIScale")
+    uiScale.Parent = Main
+    local camera = workspace.CurrentCamera
+    local function updateScale()
+        local v = camera and camera.ViewportSize
+        if not v or v.X == 0 or v.Y == 0 then return end
+        local s = math.min(v.X / design.X, v.Y / design.Y)
+        uiScale.Scale = math.clamp(s, 0.58, 1.0)
+    end
+    updateScale()
+    if camera then
+        camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateScale)
+    end
+    workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+        camera = workspace.CurrentCamera
+        updateScale()
+        if camera then
+            camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateScale)
+        end
+    end)
 
--- === PAGE: TP ===
-local tpP = pages["TP"]
-AddSection(tpP, "WORLD TELEPORTS")
-for _, w in ipairs(WORLD_TP) do
-    AddButton(tpP, "TP: " .. w, function()
-        if not tpToWorld(w) then tpToWorld(w:match("^(%a+)")) end
+    -- Load animation: fade + scale in
+    Main.BackgroundTransparency = 1
+    mainStroke.Transparency = 1
+    local loadScale = Instance.new("UIScale")
+    loadScale.Scale = 0.88
+    loadScale.Parent = Main
+    tween(loadScale, { Scale = 1 }, 0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out,
+        function() loadScale:Destroy() end)
+    tween(Main, { BackgroundTransparency = 0 }, 0.35)
+    tween(mainStroke, { Transparency = 0.55 }, 0.35)
+
+    -- ============== TITLE BAR ==============
+    local titleBar = Instance.new("Frame")
+    titleBar.Size = UDim2.new(1, 0, 0, 46)
+    titleBar.BackgroundColor3 = C.bar
+    titleBar.BorderSizePixel = 0
+    titleBar.ZIndex = 5
+    titleBar.Parent = Main
+    corner(titleBar, 14)
+    local bottomMask = Instance.new("Frame")
+    bottomMask.Size = UDim2.new(1, 0, 0.5, 0)
+    bottomMask.Position = UDim2.new(0, 0, 0.5, 0)
+    bottomMask.BackgroundColor3 = C.bar
+    bottomMask.BorderSizePixel = 0
+    bottomMask.ZIndex = 6
+    bottomMask.Parent = titleBar
+    stroke(titleBar, C.pink, 1, 0.55)
+
+    local function dot(x, col)
+        local d = Instance.new("Frame")
+        d.Size = UDim2.new(0, 10, 0, 10)
+        d.Position = UDim2.new(0, x, 0.5, -5)
+        d.BackgroundColor3 = col
+        d.BorderSizePixel = 0
+        d.ZIndex = 7
+        d.Parent = titleBar
+        Instance.new("UICorner", d).CornerRadius = UDim.new(1, 0)
+        stroke(d, col, 2, 0.5)
+    end
+    dot(14, C.pink)
+    dot(28, C.gold)
+    dot(42, C.cyan)
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, -160, 1, 0)
+    title.Position = UDim2.new(0, 60, 0, 0)
+    title.BackgroundTransparency = 1
+    title.Text = "ollie  ×  legends of speed"
+    title.TextColor3 = C.text
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 13
+    title.ZIndex = 7
+    title.Parent = titleBar
+    local shimmer = Instance.new("UIGradient")
+    shimmer.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0.0, C.pink),
+        ColorSequenceKeypoint.new(0.5, C.cyan),
+        ColorSequenceKeypoint.new(0.6, Color3.new(1,1,1)),
+        ColorSequenceKeypoint.new(0.7, C.cyan),
+        ColorSequenceKeypoint.new(1.0, C.purple),
+    })
+    shimmer.Offset = Vector2.new(0, 0)
+    shimmer.Parent = title
+    task.spawn(function()
+        local o = 0
+        while title and title.Parent do
+            if not Config.ReducedMotion then
+                o = (o + 0.004) % 1
+                shimmer.Offset = Vector2.new(o, 0)
+            end
+            RunService.RenderStepped:Wait()
+        end
+    end)
+
+    -- Minimize button
+    local minBtn = Instance.new("TextButton")
+    minBtn.Size = UDim2.new(0, 32, 0, 32)
+    minBtn.Position = UDim2.new(1, -40, 0.5, -16)
+    minBtn.BackgroundColor3 = C.off
+    minBtn.Text = "—"
+    minBtn.TextColor3 = C.cyan
+    minBtn.Font = Enum.Font.GothamBlack
+    minBtn.TextSize = 18
+    minBtn.AutoButtonColor = false
+    minBtn.BorderSizePixel = 0
+    minBtn.ZIndex = 7
+    minBtn.Parent = titleBar
+    corner(minBtn, 8)
+    stroke(minBtn, C.cyan, 1, 0.5)
+    ripple(minBtn, C.cyan)
+
+    -- version badge
+    local badge = Instance.new("TextLabel")
+    badge.Size = UDim2.new(0, 60, 0, 22)
+    badge.Position = UDim2.new(1, -80, 0.5, -11)
+    badge.BackgroundColor3 = C.pink
+    badge.BackgroundTransparency = 0.75
+    badge.Text = "v8 ✦"
+    badge.TextColor3 = C.text
+    badge.Font = Enum.Font.GothamBold
+    badge.TextSize = 10
+    badge.BorderSizePixel = 0
+    badge.ZIndex = 7
+    badge.Parent = titleBar
+    corner(badge, 4)
+    stroke(badge, C.pink, 1, 0.3)
+
+    -- ============== TAB BAR ==============
+    local tabBar = Instance.new("Frame")
+    tabBar.Size = UDim2.new(1, -20, 0, 40)
+    tabBar.Position = UDim2.new(0, 10, 0, 52)
+    tabBar.BackgroundTransparency = 1
+    tabBar.ZIndex = 5
+    tabBar.Parent = Main
+
+    local tabLayout = Instance.new("UIListLayout")
+    tabLayout.FillDirection = Enum.FillDirection.Horizontal
+    tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    tabLayout.Padding = UDim.new(0, 6)
+    tabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+    tabLayout.Parent = tabBar
+
+    local tabButtons = {}
+
+    local function makeTab(name, layoutOrder)
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(1/3, -8, 1, 0)
+        b.BackgroundColor3 = C.off
+        b.Text = name
+        b.TextColor3 = C.muted
+        b.Font = Enum.Font.GothamBold
+        b.TextSize = 11
+        b.AutoButtonColor = false
+        b.BorderSizePixel = 0
+        b.LayoutOrder = layoutOrder
+        b.ZIndex = 6
+        b.Parent = tabBar
+        corner(b, 8)
+        local s = stroke(b, C.offHi, 1, 0.5)
+        ripple(b, C.cyan)
+        tabButtons[name] = { btn = b, stroke = s }
+        return b
+    end
+
+    local function setTab(name)
+        currentTab = name
+        for n, t in pairs(tabButtons) do
+            local active = (n == name)
+            tween(t.btn, {
+                BackgroundColor3 = active and C.pink or C.off,
+                BackgroundTransparency = active and 0.6 or 0,
+            }, 0.18)
+            t.btn.TextColor3 = active and C.text or C.muted
+            t.stroke.Color = active and C.pink or C.offHi
+            t.stroke.Transparency = active and 0.15 or 0.5
+        end
+        for n, frame in pairs(tabContents) do
+            frame.Visible = (n == name)
+        end
+    end
+
+    makeTab("FARM",   1).MouseButton1Click:Connect(function() setTab("FARM") end)
+    makeTab("CONFIG", 2).MouseButton1Click:Connect(function() setTab("CONFIG") end)
+    makeTab("INFO",   3).MouseButton1Click:Connect(function() setTab("INFO") end)
+
+    -- ============== TOAST SYSTEM ==============
+    local toastLayer = Instance.new("Frame")
+    toastLayer.Size = UDim2.new(1, -20, 0, 60)
+    toastLayer.Position = UDim2.new(0, 10, 0, 100)
+    toastLayer.BackgroundTransparency = 1
+    toastLayer.ZIndex = 30
+    toastLayer.Parent = Main
+
+    local function showToast(text, color)
+        if #toastQueue >= 2 then
+            local old = toastQueue[1]
+            if old and old.Parent then old:Destroy() end
+            table.remove(toastQueue, 1)
+        end
+        local t = Instance.new("TextButton")
+        t.Size = UDim2.new(1, 0, 0, 32)
+        t.Position = UDim2.new(0, 0, -40, 0)
+        t.BackgroundColor3 = color or C.pink
+        t.BackgroundTransparency = 0.15
+        t.Text = "  " .. text
+        t.TextColor3 = C.text
+        t.TextXAlignment = Enum.TextXAlignment.Left
+        t.Font = Enum.Font.GothamBold
+        t.TextSize = 11
+        t.AutoButtonColor = false
+        t.BorderSizePixel = 0
+        t.ZIndex = 30
+        t.Parent = toastLayer
+        corner(t, 8)
+        stroke(t, color or C.pink, 1, 0.2)
+        table.insert(toastQueue, t)
+
+        tween(t, { Position = UDim2.new(0, 0, #toastQueue * 36 - 40, 0) }, 0.3,
+            Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+
+        task.delay(1.8, function()
+            if t and t.Parent then
+                tween(t, { BackgroundTransparency = 1, TextTransparency = 1 }, 0.3,
+                    Enum.EasingStyle.Quad, Enum.EasingDirection.In,
+                    function()
+                        for i, v in ipairs(toastQueue) do
+                            if v == t then table.remove(toastQueue, i) break end
+                        end
+                        t:Destroy()
+                    end)
+            end
+        end)
+    end
+
+    Hooks.onToast = showToast
+
+    -- Flash main outline on orb fire
+    local function fireFlash()
+        mainStroke.Color = C.pink
+        mainStroke.Transparency = 0
+        tween(mainStroke, { Transparency = 0.55, Color = C.cyan }, 0.35,
+            Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    end
+
+    -- Session stats hook
+    local lastFireReport = 0
+    Hooks.onFire = function(n, orbs)
+        fireFlash()
+        if os.clock() - lastFireReport > 1.2 then
+            lastFireReport = os.clock()
+            local names = table.concat(orbs, ", ")
+            showToast("+ " .. n .. " fired · " .. names, C.green)
+        end
+    end
+
+    -- ============== CONTENT AREA ==============
+    local content = Instance.new("Frame")
+    content.Size = UDim2.new(1, 0, 1, -100)
+    content.Position = UDim2.new(0, 0, 0, 96)
+    content.BackgroundTransparency = 1
+    content.ZIndex = 5
+    content.Parent = Main
+
+    -- ============== FARM TAB ==============
+    local farm = Instance.new("Frame")
+    farm.Size = UDim2.new(1, 0, 1, 0)
+    farm.BackgroundTransparency = 1
+    farm.ZIndex = 5
+    farm.Parent = content
+    tabContents["FARM"] = farm
+
+    -- place picker
+    local placeBtn = Instance.new("TextButton")
+    placeBtn.Size = UDim2.new(1, -20, 0, 46)
+    placeBtn.Position = UDim2.new(0, 10, 0, 8)
+    placeBtn.BackgroundColor3 = C.off
+    placeBtn.Text = ""
+    placeBtn.AutoButtonColor = false
+    placeBtn.BorderSizePixel = 0
+    placeBtn.ZIndex = 6
+    placeBtn.Parent = farm
+    corner(placeBtn, 8)
+    local placeStroke = stroke(placeBtn, C.purple, 1, 0.4)
+    ripple(placeBtn, C.purple)
+    hover(placeBtn, C.off, C.offHi)
+    tapPulse(placeBtn)
+
+    local placeIcon = Instance.new("TextLabel")
+    placeIcon.Size = UDim2.new(0, 32, 1, 0)
+    placeIcon.Position = UDim2.new(0, 6, 0, 0)
+    placeIcon.BackgroundTransparency = 1
+    placeIcon.Text = "◎"
+    placeIcon.TextColor3 = C.purple
+    placeIcon.Font = Enum.Font.GothamBlack
+    placeIcon.TextSize = 20
+    placeIcon.ZIndex = 7
+    placeIcon.Parent = placeBtn
+
+    local placeLbl = Instance.new("TextLabel")
+    placeLbl.Size = UDim2.new(1, -70, 0, 18)
+    placeLbl.Position = UDim2.new(0, 42, 0, 6)
+    placeLbl.BackgroundTransparency = 1
+    placeLbl.Text = "PLACE"
+    placeLbl.TextColor3 = C.muted
+    placeLbl.TextXAlignment = Enum.TextXAlignment.Left
+    placeLbl.Font = Enum.Font.GothamBold
+    placeLbl.TextSize = 9
+    placeLbl.ZIndex = 7
+    placeLbl.Parent = placeBtn
+
+    local placeVal = Instance.new("TextLabel")
+    placeVal.Size = UDim2.new(1, -70, 0, 20)
+    placeVal.Position = UDim2.new(0, 42, 0, 22)
+    placeVal.BackgroundTransparency = 1
+    placeVal.Text = Config.SelectedPlace
+    placeVal.TextColor3 = C.text
+    placeVal.TextXAlignment = Enum.TextXAlignment.Left
+    placeVal.Font = Enum.Font.GothamBold
+    placeVal.TextSize = 13
+    placeVal.ZIndex = 7
+    placeVal.Parent = placeBtn
+
+    local chevron = Instance.new("TextLabel")
+    chevron.Size = UDim2.new(0, 28, 1, 0)
+    chevron.Position = UDim2.new(1, -34, 0, 0)
+    chevron.BackgroundTransparency = 1
+    chevron.Text = "▸"
+    chevron.TextColor3 = C.cyan
+    chevron.Font = Enum.Font.GothamBold
+    chevron.TextSize = 18
+    chevron.ZIndex = 7
+    chevron.Parent = placeBtn
+
+    local pIdx = 1
+    for i, p in ipairs(PLACE_NAMES) do if p == Config.SelectedPlace then pIdx = i break end end
+    placeBtn.MouseButton1Click:Connect(function()
+        pIdx = pIdx % #PLACE_NAMES + 1
+        Config.SelectedPlace = PLACE_NAMES[pIdx]
+        placeVal.Text = Config.SelectedPlace
+        if RefreshOrbList then RefreshOrbList() end
+        showToast("→ " .. Config.SelectedPlace, C.purple)
+    end)
+
+    sectionLabel(farm, "ORBS  ·  tap to toggle", 62)
+
+    -- orb list
+    local orbList = Instance.new("Frame")
+    orbList.Size = UDim2.new(1, -20, 0, 210)
+    orbList.Position = UDim2.new(0, 10, 0, 82)
+    orbList.BackgroundColor3 = C.bg
+    orbList.BorderSizePixel = 0
+    orbList.ZIndex = 6
+    orbList.ClipsDescendants = true
+    orbList.Parent = farm
+    corner(orbList, 8)
+    stroke(orbList, C.purple, 1, 0.5)
+
+    local orbScroll = Instance.new("ScrollingFrame")
+    orbScroll.Size = UDim2.new(1, 0, 1, 0)
+    orbScroll.BackgroundTransparency = 1
+    orbScroll.BorderSizePixel = 0
+    orbScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    orbScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    orbScroll.ScrollBarThickness = 4
+    orbScroll.ScrollBarImageColor3 = C.cyan
+    orbScroll.ZIndex = 7
+    orbScroll.Parent = orbList
+    local listLayout = Instance.new("UIListLayout")
+    listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    listLayout.Padding = UDim.new(0, 4)
+    listLayout.Parent = orbScroll
+    local listPad = Instance.new("UIPadding")
+    listPad.PaddingTop    = UDim.new(0, 6)
+    listPad.PaddingLeft   = UDim.new(0, 6)
+    listPad.PaddingRight  = UDim.new(0, 6)
+    listPad.PaddingBottom = UDim.new(0, 6)
+    listPad.Parent = orbScroll
+
+    -- All / None
+    local allBtn = Instance.new("TextButton")
+    allBtn.Size = UDim2.new(0.5, -15, 0, 44)
+    allBtn.Position = UDim2.new(0, 10, 0, 300)
+    allBtn.BackgroundColor3 = C.off
+    allBtn.Text = "✓ ALL"
+    allBtn.AutoButtonColor = false
+    allBtn.TextColor3 = C.cyan
+    allBtn.Font = Enum.Font.GothamBold
+    allBtn.TextSize = 12
+    allBtn.BorderSizePixel = 0
+    allBtn.ZIndex = 6
+    allBtn.Parent = farm
+    corner(allBtn, 8)
+    stroke(allBtn, C.cyan, 1, 0.4)
+    ripple(allBtn, C.cyan)
+    hover(allBtn, C.off, C.offHi)
+    tapPulse(allBtn)
+
+    local noneBtn = Instance.new("TextButton")
+    noneBtn.Size = UDim2.new(0.5, -15, 0, 44)
+    noneBtn.Position = UDim2.new(0.5, 5, 0, 300)
+    noneBtn.BackgroundColor3 = C.off
+    noneBtn.Text = "✕ NONE"
+    noneBtn.AutoButtonColor = false
+    noneBtn.TextColor3 = C.pink
+    noneBtn.Font = Enum.Font.GothamBold
+    noneBtn.TextSize = 12
+    noneBtn.BorderSizePixel = 0
+    noneBtn.ZIndex = 6
+    noneBtn.Parent = farm
+    corner(noneBtn, 8)
+    stroke(noneBtn, C.pink, 1, 0.4)
+    ripple(noneBtn, C.pink)
+    hover(noneBtn, C.off, C.offHi)
+    tapPulse(noneBtn)
+
+    -- Auto Orb toggle
+    local autoBtn = Instance.new("TextButton")
+    autoBtn.Size = UDim2.new(1, -20, 0, 56)
+    autoBtn.Position = UDim2.new(0, 10, 0, 356)
+    autoBtn.BackgroundColor3 = C.off
+    autoBtn.BackgroundTransparency = 0
+    autoBtn.Text = ""
+    autoBtn.AutoButtonColor = false
+    autoBtn.BorderSizePixel = 0
+    autoBtn.ZIndex = 6
+    autoBtn.Parent = farm
+    corner(autoBtn, 10)
+    local autoStroke = stroke(autoBtn, C.offHi, 1.5, 0.5)
+    ripple(autoBtn, C.pink)
+    tapPulse(autoBtn)
+
+    local autoGlyph = Instance.new("Frame")
+    autoGlyph.Size = UDim2.new(0, 40, 0, 40)
+    autoGlyph.Position = UDim2.new(0, 10, 0.5, -20)
+    autoGlyph.BackgroundColor3 = C.off
+    autoGlyph.BorderSizePixel = 0
+    autoGlyph.ZIndex = 7
+    autoGlyph.Parent = autoBtn
+    corner(autoGlyph, 20)
+    local autoGlyphStroke = stroke(autoGlyph, C.muted, 1, 0.5)
+
+    local autoIcon = Instance.new("TextLabel")
+    autoIcon.Size = UDim2.new(1, 0, 1, 0)
+    autoIcon.BackgroundTransparency = 1
+    autoIcon.Text = "⟳"
+    autoIcon.TextColor3 = C.muted
+    autoIcon.Font = Enum.Font.GothamBlack
+    autoIcon.TextSize = 22
+    autoIcon.ZIndex = 8
+    autoIcon.Parent = autoGlyph
+
+    local autoTitle = Instance.new("TextLabel")
+    autoTitle.Size = UDim2.new(1, -120, 0, 20)
+    autoTitle.Position = UDim2.new(0, 60, 0, 8)
+    autoTitle.BackgroundTransparency = 1
+    autoTitle.Text = "AUTO ORB"
+    autoTitle.TextColor3 = C.muted
+    autoTitle.TextXAlignment = Enum.TextXAlignment.Left
+    autoTitle.Font = Enum.Font.GothamBold
+    autoTitle.TextSize = 12
+    autoTitle.ZIndex = 7
+    autoTitle.Parent = autoBtn
+
+    local autoSub = Instance.new("TextLabel")
+    autoSub.Size = UDim2.new(1, -120, 0, 16)
+    autoSub.Position = UDim2.new(0, 60, 0, 28)
+    autoSub.BackgroundTransparency = 1
+    autoSub.Text = "tap to start farming"
+    autoSub.TextColor3 = C.muted
+    autoSub.TextXAlignment = Enum.TextXAlignment.Left
+    autoSub.Font = Enum.Font.Gotham
+    autoSub.TextSize = 10
+    autoSub.ZIndex = 7
+    autoSub.Parent = autoBtn
+
+    local autoChip = Instance.new("Frame")
+    autoChip.Size = UDim2.new(0, 56, 0, 24)
+    autoChip.Position = UDim2.new(1, -66, 0.5, -12)
+    autoChip.BackgroundColor3 = C.off
+    autoChip.BorderSizePixel = 0
+    autoChip.ZIndex = 7
+    autoChip.Parent = autoBtn
+    corner(autoChip, 12)
+    local autoChipStroke = stroke(autoChip, C.muted, 1, 0.3)
+
+    local autoChipLbl = Instance.new("TextLabel")
+    autoChipLbl.Size = UDim2.new(1, 0, 1, 0)
+    autoChipLbl.BackgroundTransparency = 1
+    autoChipLbl.Text = "OFF"
+    autoChipLbl.TextColor3 = C.text
+    autoChipLbl.Font = Enum.Font.GothamBold
+    autoChipLbl.TextSize = 10
+    autoChipLbl.ZIndex = 8
+    autoChipLbl.Parent = autoChip
+
+    local autoPulse
+    local function applyAuto(on)
+        Config.AutoOrb = on
+        tween(autoBtn, {
+            BackgroundColor3 = on and C.pink or C.off,
+            BackgroundTransparency = on and 0.65 or 0,
+        }, 0.2)
+        autoStroke.Color = on and C.pink or C.offHi
+        autoGlyphStroke.Color = on and C.pink or C.muted
+        autoIcon.TextColor3 = on and C.text or C.muted
+        autoTitle.TextColor3 = on and C.text or C.muted
+        autoSub.Text = on and "farming · tap to stop" or "tap to start farming"
+        tween(autoChip, { BackgroundColor3 = on and C.pink or C.off }, 0.2)
+        autoChipLbl.Text = on and "ON" or "OFF"
+        if autoPulse then autoPulse:Cancel() autoPulse = nil end
+        if on then
+            autoPulse = pulse(autoStroke, true)
+            autoPulse:Play()
+            autoGlyphStroke.Transparency = 0.15
+            task.spawn(function()
+                while Config.AutoOrb and autoGlyph and autoGlyph.Parent do
+                    tween(autoGlyph, { Rotation = autoGlyph.Rotation + 360 }, 1.2,
+                        Enum.EasingStyle.Linear)
+                    task.wait(1.2)
+                end
+                if autoGlyph and autoGlyph.Parent then
+                    tween(autoGlyph, { Rotation = 0 }, 0.3)
+                end
+            end)
+            task.spawn(function() pcall(fireOrbs) end)
+            showToast("▶ Auto Orb ON", C.pink)
+        else
+            autoStroke.Transparency = 0.55
+            autoGlyphStroke.Transparency = 0.5
+            showToast("⏸ Auto Orb OFF", C.muted)
+        end
+    end
+
+    autoBtn.MouseButton1Click:Connect(function()
+        applyAuto(not Config.AutoOrb)
+    end)
+
+    if Config.AutoOrb then applyAuto(true) end
+
+    -- mini telemetry bar
+    local mini = Instance.new("Frame")
+    mini.Size = UDim2.new(1, -20, 0, 40)
+    mini.Position = UDim2.new(0, 10, 0, 424)
+    mini.BackgroundColor3 = C.bg
+    mini.BorderSizePixel = 0
+    mini.ZIndex = 6
+    mini.Parent = farm
+    corner(mini, 8)
+    stroke(mini, C.cyan, 1, 0.55)
+
+    local miniLbl = Instance.new("TextLabel")
+    miniLbl.Size = UDim2.new(1, -20, 1, 0)
+    miniLbl.Position = UDim2.new(0, 10, 0, 0)
+    miniLbl.BackgroundTransparency = 1
+    miniLbl.TextColor3 = C.cyan
+    miniLbl.TextXAlignment = Enum.TextXAlignment.Left
+    miniLbl.Font = Enum.Font.Code
+    miniLbl.TextSize = 10
+    miniLbl.Text = ""
+    miniLbl.ZIndex = 7
+    miniLbl.Parent = mini
+
+    task.spawn(function()
+        while mini and mini.Parent do
+            task.wait(0.12)
+            local pct = Bucket.tokens / math.max(1, Config.BucketSize)
+            local bar = ("█"):rep(math.floor(pct * 20))
+            local space = ("░"):rep(20 - #bar)
+            miniLbl.Text = string.format("TOKENS [%s%s] %d/%d",
+                bar, space,
+                math.floor(Bucket.tokens), Config.BucketSize)
+        end
+    end)
+
+    function RefreshOrbList()
+        for _, c in ipairs(orbScroll:GetChildren()) do
+            if c:IsA("TextButton") or c:IsA("TextLabel") then c:Destroy() end
+        end
+        local pool = PLACE_ORBS[Config.SelectedPlace] or {}
+        if #pool == 0 then
+            local empty = Instance.new("TextLabel")
+            empty.Size = UDim2.new(1, -8, 0, 32)
+            empty.BackgroundTransparency = 1
+            empty.Text = "  no orbs mapped here"
+            empty.TextColor3 = C.muted
+            empty.TextXAlignment = Enum.TextXAlignment.Left
+            empty.Font = Enum.Font.Gotham
+            empty.TextSize = 11
+            empty.ZIndex = 8
+            empty.Parent = orbScroll
+            return
+        end
+        for i, orb in ipairs(pool) do
+            local on = Config.SelectedOrbs[orb] == true
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.new(1, -8, 0, 42)
+            b.BackgroundColor3 = on and C.pink or C.off
+            b.BackgroundTransparency = on and 0.78 or 0
+            b.Text = ""
+            b.AutoButtonColor = false
+            b.BorderSizePixel = 0
+            b.LayoutOrder = i
+            b.ZIndex = 7
+            b.Parent = orbScroll
+            corner(b, 6)
+            local bs = stroke(b, on and C.pink or C.offHi, 1, on and 0.15 or 0.55)
+            ripple(b, on and C.pink or C.cyan)
+            tapPulse(b)
+
+            local checkbox = Instance.new("Frame")
+            checkbox.Size = UDim2.new(0, 20, 0, 20)
+            checkbox.Position = UDim2.new(0, 10, 0.5, -10)
+            checkbox.BackgroundColor3 = on and C.pink or C.bg
+            checkbox.BorderSizePixel = 0
+            checkbox.ZIndex = 8
+            checkbox.Parent = b
+            corner(checkbox, 4)
+            local cbs = stroke(checkbox, on and C.pink or C.muted, 1, on and 0.1 or 0.5)
+
+            local check = Instance.new("TextLabel")
+            check.Size = UDim2.new(1, 0, 1, 0)
+            check.BackgroundTransparency = 1
+            check.Text = on and "✓" or ""
+            check.TextColor3 = Color3.new(1,1,1)
+            check.Font = Enum.Font.GothamBlack
+            check.TextSize = 13
+            check.ZIndex = 9
+            check.Parent = checkbox
+
+            local lbl = Instance.new("TextLabel")
+            lbl.Size = UDim2.new(1, -60, 1, 0)
+            lbl.Position = UDim2.new(0, 40, 0, 0)
+            lbl.BackgroundTransparency = 1
+            lbl.Text = orb
+            lbl.TextColor3 = on and C.text or C.muted
+            lbl.TextXAlignment = Enum.TextXAlignment.Left
+            lbl.Font = Enum.Font.GothamBold
+            lbl.TextSize = 12
+            lbl.ZIndex = 8
+            lbl.Parent = b
+
+            b.MouseButton1Click:Connect(function()
+                Config.SelectedOrbs[orb] = not Config.SelectedOrbs[orb]
+                local now = Config.SelectedOrbs[orb]
+                tween(b, {
+                    BackgroundColor3 = now and C.pink or C.off,
+                    BackgroundTransparency = now and 0.78 or 0,
+                }, 0.18)
+                bs.Color = now and C.pink or C.offHi
+                bs.Transparency = now and 0.15 or 0.55
+                tween(checkbox, { BackgroundColor3 = now and C.pink or C.bg }, 0.18)
+                cbs.Color = now and C.pink or C.muted
+                check.Text = now and "✓" or ""
+                lbl.TextColor3 = now and C.text or C.muted
+                if now then
+                    showToast("+ " .. orb, C.pink)
+                else
+                    showToast("− " .. orb, C.muted)
+                end
+            end)
+        end
+    end
+
+    allBtn.MouseButton1Click:Connect(function()
+        for _, o in ipairs(PLACE_ORBS[Config.SelectedPlace] or {}) do
+            Config.SelectedOrbs[o] = true
+        end
+        RefreshOrbList()
+        showToast("✓ all orbs selected", C.cyan)
+    end)
+    noneBtn.MouseButton1Click:Connect(function()
+        for _, o in ipairs(PLACE_ORBS[Config.SelectedPlace] or {}) do
+            Config.SelectedOrbs[o] = false
+        end
+        RefreshOrbList()
+        showToast("✕ orbs cleared", C.pink)
+    end)
+
+    -- ============== CONFIG TAB ==============
+    local cfg = Instance.new("Frame")
+    cfg.Size = UDim2.new(1, 0, 1, 0)
+    cfg.BackgroundTransparency = 1
+    cfg.ZIndex = 5
+    cfg.Visible = false
+    cfg.Parent = content
+    tabContents["CONFIG"] = cfg
+
+    sectionLabel(cfg, "TUNING", 10)
+
+    local function makeSlider(label, y, min, max, key, isInt)
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(1, -100, 0, 16)
+        lbl.Position = UDim2.new(0, 10, 0, y)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = label
+        lbl.TextColor3 = C.muted
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Font = Enum.Font.GothamBold
+        lbl.TextSize = 11
+        lbl.ZIndex = 6
+        lbl.Parent = cfg
+
+        local val = Instance.new("TextLabel")
+        val.Size = UDim2.new(0, 90, 0, 16)
+        val.Position = UDim2.new(1, -100, 0, y)
+        val.BackgroundTransparency = 1
+        val.Text = tostring(Config[key])
+        val.TextColor3 = C.cyan
+        val.TextXAlignment = Enum.TextXAlignment.Right
+        val.Font = Enum.Font.Code
+        val.TextSize = 12
+        val.ZIndex = 6
+        val.Parent = cfg
+
+        local bar = Instance.new("Frame")
+        bar.Size = UDim2.new(1, -20, 0, 10)
+        bar.Position = UDim2.new(0, 10, 0, y + 22)
+        bar.BackgroundColor3 = C.off
+        bar.BorderSizePixel = 0
+        bar.ZIndex = 6
+        bar.Parent = cfg
+        corner(bar, 5)
+        stroke(bar, C.purple, 1, 0.55)
+
+        local fill = Instance.new("Frame")
+        local pct = (Config[key] - min) / (max - min)
+        fill.Size = UDim2.new(pct, 0, 1, 0)
+        fill.BackgroundColor3 = C.pink
+        fill.BorderSizePixel = 0
+        fill.ZIndex = 7
+        fill.Parent = bar
+        corner(fill, 5)
+        grad(fill, C.pink, C.cyan, 0)
+
+        local knob = Instance.new("Frame")
+        knob.AnchorPoint = Vector2.new(0.5, 0.5)
+        knob.Size = UDim2.new(0, 24, 0, 24)
+        knob.Position = UDim2.new(pct, 0, 0.5, 0)
+        knob.BackgroundColor3 = Color3.new(1, 1, 1)
+        knob.BorderSizePixel = 0
+        knob.ZIndex = 8
+        knob.Parent = bar
+        Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
+        stroke(knob, C.cyan, 1.5, 0.1)
+        local knobGlow = stroke(knob, C.pink, 6, 0.85)
+
+        local hit = Instance.new("TextButton")
+        hit.Size = UDim2.new(1, 0, 5, 0)
+        hit.Position = UDim2.new(0, 0, -2, 0)
+        hit.BackgroundTransparency = 1
+        hit.Text = ""
+        hit.ZIndex = 9
+        hit.Parent = bar
+
+        local drag = false
+        hit.MouseButton1Down:Connect(function()
+            drag = true
+            tween(knob, { Size = UDim2.new(0, 30, 0, 30) }, 0.1)
+            tween(knobGlow, { Transparency = 0.2 }, 0.15)
+        end)
+        UserInputService.InputEnded:Connect(function(i)
+            if i.UserInputType == Enum.UserInputType.MouseButton1 and drag then
+                drag = false
+                tween(knob, { Size = UDim2.new(0, 24, 0, 24) }, 0.15)
+                tween(knobGlow, { Transparency = 0.85 }, 0.25)
+            end
+        end)
+
+        RunService.RenderStepped:Connect(function()
+            if not drag then return end
+            local mx = UserInputService:GetMouseLocation().X
+            local rel = math.clamp((mx - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+            local raw = min + (max - min) * rel
+            local v = isInt and math.floor(raw + 0.5) or math.floor(raw * 100 + 0.5) / 100
+            Config[key] = v
+            fill.Size = UDim2.new(rel, 0, 1, 0)
+            knob.Position = UDim2.new(rel, 0, 0.5, 0)
+            val.Text = isInt and tostring(v) or string.format("%.2f", v)
+            if key == "OrbBurst" then
+                local active = math.max(1, #getActiveOrbs())
+                Config.BucketSize = v * active
+                Config.BucketRate = math.min(450, v * active * 10)
+            end
+        end)
+    end
+
+    makeSlider("ORB BURST",  36, 1, 30, "OrbBurst", true)
+    makeSlider("CYCLE RATE", 82, 0.02, 0.5, "OrbRate", false)
+
+    -- Anti-Lag toggle
+    local function makeMiniToggle(label, sub, y, key, accent)
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(1, -20, 0, 50)
+        b.Position = UDim2.new(0, 10, 0, y)
+        b.BackgroundColor3 = Config[key] and accent or C.off
+        b.BackgroundTransparency = Config[key] and 0.65 or 0
+        b.Text = ""
+        b.AutoButtonColor = false
+        b.BorderSizePixel = 0
+        b.ZIndex = 6
+        b.Parent = cfg
+        corner(b, 8)
+        local s = stroke(b, Config[key] and accent or C.offHi, 1.5, Config[key] and 0.15 or 0.5)
+        ripple(b, accent)
+        tapPulse(b)
+
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(1, -100, 0, 18)
+        lbl.Position = UDim2.new(0, 12, 0, 8)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = label
+        lbl.TextColor3 = Config[key] and C.text or C.muted
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Font = Enum.Font.GothamBold
+        lbl.TextSize = 12
+        lbl.ZIndex = 7
+        lbl.Parent = b
+
+        local subLbl = Instance.new("TextLabel")
+        subLbl.Size = UDim2.new(1, -100, 0, 16)
+        subLbl.Position = UDim2.new(0, 12, 0, 26)
+        subLbl.BackgroundTransparency = 1
+        subLbl.Text = sub
+        subLbl.TextColor3 = C.muted
+        subLbl.TextXAlignment = Enum.TextXAlignment.Left
+        subLbl.Font = Enum.Font.Gotham
+        subLbl.TextSize = 9
+        subLbl.ZIndex = 7
+        subLbl.Parent = b
+
+        local chip = Instance.new("Frame")
+        chip.Size = UDim2.new(0, 56, 0, 24)
+        chip.Position = UDim2.new(1, -66, 0.5, -12)
+        chip.BackgroundColor3 = Config[key] and accent or C.off
+        chip.BorderSizePixel = 0
+        chip.ZIndex = 7
+        chip.Parent = b
+        corner(chip, 12)
+        stroke(chip, Config[key] and accent or C.muted, 1, 0.3)
+
+        local chipLbl = Instance.new("TextLabel")
+        chipLbl.Size = UDim2.new(1, 0, 1, 0)
+        chipLbl.BackgroundTransparency = 1
+        chipLbl.Text = Config[key] and "ON" or "OFF"
+        chipLbl.TextColor3 = C.text
+        chipLbl.Font = Enum.Font.GothamBold
+        chipLbl.TextSize = 10
+        chipLbl.ZIndex = 8
+        chipLbl.Parent = chip
+
+        local p
+        local function apply(on)
+            Config[key] = on
+            tween(b, {
+                BackgroundColor3 = on and accent or C.off,
+                BackgroundTransparency = on and 0.65 or 0,
+            }, 0.2)
+            s.Color = on and accent or C.offHi
+            lbl.TextColor3 = on and C.text or C.muted
+            tween(chip, { BackgroundColor3 = on and accent or C.off }, 0.2)
+            chipLbl.Text = on and "ON" or "OFF"
+            if p then p:Cancel() p = nil end
+            if on then
+                p = pulse(s, true) p:Play()
+            else
+                s.Transparency = 0.5
+            end
+        end
+        if Config[key] then p = pulse(s, true) p:Play() end
+        b.MouseButton1Click:Connect(function() apply(not Config[key]) end)
+        return apply
+    end
+
+    makeMiniToggle("ANTI-LAG", "smooth frame every 10 fires", 128, "AntiLag", C.cyan)
+    makeMiniToggle("REDUCED MOTION", "disable particles + shimmer", 186, "ReducedMotion", C.purple)
+
+    -- ============== INFO TAB ==============
+    local infoTab = Instance.new("Frame")
+    infoTab.Size = UDim2.new(1, 0, 1, 0)
+    infoTab.BackgroundTransparency = 1
+    infoTab.ZIndex = 5
+    infoTab.Visible = false
+    infoTab.Parent = content
+    tabContents["INFO"] = infoTab
+
+    sectionLabel(infoTab, "SESSION", 10)
+
+    local statCard = Instance.new("Frame")
+    statCard.Size = UDim2.new(1, -20, 0, 100)
+    statCard.Position = UDim2.new(0, 10, 0, 32)
+    statCard.BackgroundColor3 = C.bg
+    statCard.BorderSizePixel = 0
+    statCard.ZIndex = 6
+    statCard.Parent = infoTab
+    corner(statCard, 10)
+    stroke(statCard, C.pink, 1, 0.5)
+
+    local orbsFiredLbl = Instance.new("TextLabel")
+    orbsFiredLbl.Size = UDim2.new(1, -20, 0, 50)
+    orbsFiredLbl.Position = UDim2.new(0, 12, 0, 8)
+    orbsFiredLbl.BackgroundTransparency = 1
+    orbsFiredLbl.Text = "0"
+    orbsFiredLbl.TextColor3 = C.pink
+    orbsFiredLbl.TextXAlignment = Enum.TextXAlignment.Left
+    orbsFiredLbl.Font = Enum.Font.GothamBlack
+    orbsFiredLbl.TextSize = 36
+    orbsFiredLbl.ZIndex = 7
+    orbsFiredLbl.Parent = statCard
+
+    local orbsFiredSub = Instance.new("TextLabel")
+    orbsFiredSub.Size = UDim2.new(1, -20, 0, 18)
+    orbsFiredSub.Position = UDim2.new(0, 12, 0, 58)
+    orbsFiredSub.BackgroundTransparency = 1
+    orbsFiredSub.Text = "ORBS FIRED THIS SESSION"
+    orbsFiredSub.TextColor3 = C.muted
+    orbsFiredSub.TextXAlignment = Enum.TextXAlignment.Left
+    orbsFiredSub.Font = Enum.Font.GothamBold
+    orbsFiredSub.TextSize = 9
+    orbsFiredSub.ZIndex = 7
+    orbsFiredSub.Parent = statCard
+
+    local uptimeLbl = Instance.new("TextLabel")
+    uptimeLbl.Size = UDim2.new(1, -20, 0, 18)
+    uptimeLbl.Position = UDim2.new(0, 12, 0, 76)
+    uptimeLbl.BackgroundTransparency = 1
+    uptimeLbl.Text = "uptime 00:00"
+    uptimeLbl.TextColor3 = C.cyan
+    uptimeLbl.TextXAlignment = Enum.TextXAlignment.Left
+    uptimeLbl.Font = Enum.Font.Code
+    uptimeLbl.TextSize = 10
+    uptimeLbl.ZIndex = 7
+    uptimeLbl.Parent = statCard
+
+    sectionLabel(infoTab, "CHEATSHEET", 144)
+
+    local sheet = Instance.new("Frame")
+    sheet.Size = UDim2.new(1, -20, 0, 200)
+    sheet.Position = UDim2.new(0, 10, 0, 166)
+    sheet.BackgroundColor3 = C.bg
+    sheet.BorderSizePixel = 0
+    sheet.ZIndex = 6
+    sheet.Parent = infoTab
+    corner(sheet, 10)
+    stroke(sheet, C.cyan, 1, 0.5)
+
+    local sheetLbl = Instance.new("TextLabel")
+    sheetLbl.Size = UDim2.new(1, -20, 1, -20)
+    sheetLbl.Position = UDim2.new(0, 10, 0, 10)
+    sheetLbl.BackgroundTransparency = 1
+    sheetLbl.Text = "Orb → place mapping:\n\nEthereal Orb  →  Magma, Universe, Electric Cave, Jungle Cave\nGreen Orb  →  Universe only\nOrange Orb  →  Universe only\nGem  →  every island\n\nRebirth requires level 50, +25 per rebirth.\nRebirth target stops farming early — good for island unlocks."
+    sheetLbl.TextColor3 = C.muted
+    sheetLbl.TextXAlignment = Enum.TextXAlignment.Left
+    sheetLbl.TextYAlignment = Enum.TextYAlignment.Top
+    sheetLbl.Font = Enum.Font.Gotham
+    sheetLbl.TextSize = 10
+    sheetLbl.ZIndex = 7
+    sheetLbl.Parent = sheet
+
+    sectionLabel(infoTab, "CREDITS", 376)
+
+    local footer = Instance.new("TextLabel")
+    footer.Size = UDim2.new(1, -20, 0, 40)
+    footer.Position = UDim2.new(0, 10, 0, 398)
+    footer.BackgroundTransparency = 1
+    footer.Text = "ofx · absolute ollie · 6767\n3 eyes · 1 fridge · 1 bench"
+    footer.TextColor3 = C.muted
+    footer.TextXAlignment = Enum.TextXAlignment.Left
+    footer.Font = Enum.Font.Code
+    footer.TextSize = 10
+    footer.ZIndex = 6
+    footer.Parent = infoTab
+
+    -- live stat updater
+    task.spawn(function()
+        while orbsFiredLbl and orbsFiredLbl.Parent do
+            task.wait(0.25)
+            orbsFiredLbl.Text = tostring(Stats.orbsFired)
+            local el = os.clock() - Stats.startTime
+            local m = math.floor(el / 60)
+            local s = math.floor(el % 60)
+            uptimeLbl.Text = string.format("uptime %02d:%02d", m, s)
+        end
+    end)
+
+    -- ============== DRAG / SNAP ==============
+    local dragging, dragInput, dragStart, startPos
+    local TITLE_ZONE = 60  -- only top bar + tab bar draggable
+
+    titleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = Main.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                    -- Snap to nearest edge
+                    local v = camera and camera.ViewportSize or Vector2.new(1920, 1080)
+                    local curX = Main.AbsolutePosition.X + Main.AbsoluteSize.X / 2
+                    local target
+                    if curX < v.X / 2 then
+                        target = UDim2.new(0, 12, startPos.Y.Scale,
+                            math.clamp(Main.AbsolutePosition.Y, 10, v.Y - Main.AbsoluteSize.Y - 10))
+                    else
+                        target = UDim2.new(1, -Main.AbsoluteSize.X - 12, startPos.Y.Scale,
+                            math.clamp(Main.AbsolutePosition.Y, 10, v.Y - Main.AbsoluteSize.Y - 10))
+                    end
+                    tween(Main, { Position = target }, 0.25,
+                        Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+                end
+            end)
+        end
+    end)
+    titleBar.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            Main.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+
+    -- ============== MINIMIZE ORB ==============
+    MinimizeOrb = Instance.new("TextButton")
+    MinimizeOrb.Size = UDim2.new(0, 56, 0, 56)
+    MinimizeOrb.Position = UDim2.new(0, 16, 0.5, -28)
+    MinimizeOrb.BackgroundColor3 = C.pink
+    MinimizeOrb.BackgroundTransparency = 0.2
+    MinimizeOrb.Text = "ollie"
+    MinimizeOrb.TextColor3 = C.text
+    MinimizeOrb.Font = Enum.Font.GothamBlack
+    MinimizeOrb.TextSize = 11
+    MinimizeOrb.AutoButtonColor = false
+    MinimizeOrb.BorderSizePixel = 0
+    MinimizeOrb.Visible = false
+    MinimizeOrb.ZIndex = 40
+    MinimizeOrb.Parent = GUI
+    corner(MinimizeOrb, 28)
+    local minOrbStroke = stroke(MinimizeOrb, C.cyan, 2, 0.2)
+    local minOrbPulse = pulse(minOrbStroke, true)
+    minOrbPulse:Play()
+
+    local function minimizePanel()
+        local fadeTo = Main.Position
+        tween(Main, { Position = UDim2.new(0.5, 0, 0.5, 0), Size = UDim2.new(0, 40, 0, 40) }, 0.25,
+            Enum.EasingStyle.Back, Enum.EasingDirection.In, function()
+                Main.Visible = false
+                Main.Size = UDim2.new(0, 340, 0, 680)
+                Main.Position = fadeTo
+                MinimizeOrb.Visible = true
+            end)
+        tween(Blur, { Size = 0 }, 0.3)
+    end
+
+    local function restorePanel()
+        MinimizeOrb.Visible = false
+        Main.Visible = true
+        Main.Size = UDim2.new(0, 40, 0, 40)
+        tween(Main, { Size = UDim2.new(0, 340, 0, 680) }, 0.3,
+            Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+    end
+
+    minBtn.MouseButton1Click:Connect(minimizePanel)
+    MinimizeOrb.MouseButton1Click:Connect(restorePanel)
+
+    -- MinimizeOrb is draggable too
+    local mDrag, mStart, mStartPos
+    MinimizeOrb.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            mDrag = true
+            mStart = input.Position
+            mStartPos = MinimizeOrb.Position
+        end
+    end)
+    MinimizeOrb.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch then
+            if mDrag then
+                local delta = input.Position - mStart
+                MinimizeOrb.Position = UDim2.new(
+                    mStartPos.X.Scale, mStartPos.X.Offset + delta.X,
+                    mStartPos.Y.Scale, mStartPos.Y.Offset + delta.Y
+                )
+            end
+        end
+    end)
+    MinimizeOrb.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            mDrag = false
+        end
+    end)
+
+    -- ============== BACKGROUND MOTION ==============
+    task.spawn(function()
+        while Main and Main.Parent do
+            if not Config.ReducedMotion then
+                tween(mainStroke, { Transparency = 0.25 }, 1.4)
+                bgGrad.Rotation = (bgGrad.Rotation + 40) % 360
+                task.wait(1.4)
+                tween(mainStroke, { Transparency = 0.65 }, 1.4)
+                bgGrad.Rotation = (bgGrad.Rotation + 40) % 360
+                task.wait(1.4)
+            else
+                task.wait(0.5)
+            end
+        end
+    end)
+
+    -- blur pulse when AutoOrb is on
+    task.spawn(function()
+        while Main and Main.Parent do
+            if Config.AutoOrb and not Config.ReducedMotion then
+                tween(Blur, { Size = 4 }, 0.6)
+                task.wait(1.4)
+                tween(Blur, { Size = 1 }, 0.6)
+            else
+                if Blur.Size > 0 then
+                    tween(Blur, { Size = 0 }, 0.3)
+                end
+            end
+            task.wait(2)
+        end
+    end)
+
+    -- ============== INIT ==============
+    setTab("FARM")
+    RefreshOrbList()
+
+    -- Welcome toast
+    task.delay(0.6, function()
+        showToast("✦ ollie v8 ready · mobile", C.cyan)
     end)
 end
-AddButton(tpP, "TP: Next Checkpoint", function() tpNextStage() end)
+-- ================================
 
--- === WINDOW DRAG LOGIC ===
-local dragging, dragInput, dragStart, startPos
-header.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true; dragStart = input.Position; startPos = main.Position
-        input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
-    end
-end)
-header.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end
-end)
-UIS.InputChanged:Connect(function(input)
-    if input == dragInput and dragging then
-        local delta = input.Position - dragStart
-        main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == Enum.KeyCode.RightShift and GUI then
+        GUI.Enabled = not GUI.Enabled
     end
 end)
 
--- === OPEN/CLOSE LOGIC ===
-local isOpen = false
-fab.MouseButton1Click:Connect(function()
-    isOpen = not isOpen
-    if isOpen then
-        main.Visible = true
-        main.Size = UDim2.new(0, 0, 0, 0)
-        tween(main, 0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out, { Size = UDim2.new(0, 480, 0, 320) })
-        showTab("Main")
-    else
-        tween(main, 0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In, { Size = UDim2.new(0, 0, 0, 0) })
-        task.wait(0.2)
-        main.Visible = false
-    end
-end)
-closeBtn.MouseButton1Click:Connect(function() fab.MouseButton1Click:Fire() end)
-
--- === STARTUP ===
-resolveRemotes(); applyStats()
-print("[martin hub] v19 loaded — 5 tabs only, tap M to open")
+buildGUI()
+print("[ollie] LOS v8 — mobile X1000 COOL · tabs · toasts · blur · 6767")
