@@ -1,6 +1,6 @@
 --[[ Martin Hub // Legends of Speed — v15
-     NEW: x100 Glow-up UI. Glassmorphism, gradients, smooth toggles, animated sliders.
-     kept: all backend logic (batch x30, auto hatch, pets, ESP, etc). ]]
+     Full Glass UI, x100 Glow-up, animations, cross-platform.
+     Logic: Batch x30, Auto Hatch, Pet fix, ESP, Teleports. ]]
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -61,7 +61,7 @@ local CRYSTALS = {
 }
 
 -- ============================================================
--- HELPERS & LOOPS (Untouched)
+-- HELPERS & LOOPS
 -- ============================================================
 local function getChar()
     local c = plr.Character
@@ -732,7 +732,7 @@ end)
 -- === PAGE: FARM ===
 local farmP = pages["Farm"]
 AddSection(farmP, "AUTOMATION")
-local orbBtn = AddToggle(farmP, "Auto Orb", "autoOrb", function(on) if on then startOrbLoop() else stopOrbLoop() end end)
+AddToggle(farmP, "Auto Orb", "autoOrb", function(on) if on then startOrbLoop() else stopOrbLoop() end end)
 AddToggle(farmP, "Hoop Magnet", "autoHoop", function(on) if on then startHoopLoop() else stopHoopLoop() end end)
 AddToggle(farmP, "Auto Rebirth", "autoRebirth", function(on) if on then resolveRemotes(); startRebirthLoop() else stopRebirthLoop() end end)
 
@@ -796,7 +796,7 @@ local function repaintOrbs()
 end
 for _, orbName in ipairs(ORB_LIST) do
     local b = AddButton(orbsP, "   " .. orbName, function(btn)
-        S.selectedOrb = orbName; repaintOrbs(); refreshPickLbl()
+        S.selectedOrb = orbName; repaintOrbs()
     end)
     b.TextXAlignment = Enum.TextXAlignment.Left; orbButtons[orbName] = b
 end
@@ -811,7 +811,7 @@ local function repaintMaps()
 end
 for _, mapName in ipairs(MAP_LIST) do
     local b = AddButton(orbsP, "   " .. mapName, function(btn)
-        S.selectedMap = mapName; repaintMaps(); refreshPickLbl()
+        S.selectedMap = mapName; repaintMaps()
     end)
     b.TextXAlignment = Enum.TextXAlignment.Left; mapButtons[mapName] = b
 end
@@ -977,5 +977,6 @@ fab.MouseButton1Click:Connect(function()
 end)
 closeBtn.MouseButton1Click:Connect(function() fab.MouseButton1Click:Fire() end)
 
+-- === STARTUP ===
 resolveRemotes(); applyStats()
-print("[martin hub] x100 Glass UI loaded — tap M to open")
+print("[martin hub] v15 Full Glass UI loaded — tap M to open")
