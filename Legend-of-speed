@@ -1,6 +1,7 @@
---[[ Martin Hub // Legends of Speed — v16
-     NEW: Multi-Orb Selector — pick and stack as many orbs as you want.
-     kept: everything else from v15 (Glass UI, Batch, Pets, ESP, TP). ]]
+--[[ Martin Hub // Legends of Speed — v17
+     FIX: Pet equip/unequip now uses the pet object, not the name.
+     FIX: Added "Force Unequip" to clear phantom slots.
+     NEW: Batch limit raised to x50. ]]
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -16,7 +17,7 @@ local plr        = Players.LocalPlayer
 local S = {
     speed = 16, jump = 50,
     autoOrb   = false, orbMult = 1,
-    selectedOrbs = { ["Red Orb"] = true, ["Blue Orb"] = true }, -- Multi-select!
+    selectedOrbs = { ["Red Orb"] = true, ["Blue Orb"] = true },
     selectedMap = "Auto (current)",
     autoHoop    = false, autoRebirth = false,
     autoHatch   = false, selectedCrystal = "Blue Crystal",
@@ -24,9 +25,9 @@ local S = {
 }
 
 local SPEED_MAX, JUMP_MAX = 2000, 1000
-local MULT_MAX   = 30
+local MULT_MAX   = 50 -- x50 Batch Limit
 local ORB_TICK   = 0.09
-local ORB_BUDGET = 60
+local ORB_BUDGET = 100 -- Raised so x50 can actually fire
 local HOOP_CHUNK = 30
 local ESP_CAP    = 250
 local SCAN_CAP   = 12000
@@ -62,7 +63,7 @@ local CRYSTALS = {
 }
 
 -- ============================================================
--- HELPERS & LOOPS
+-- HELPERS
 -- ============================================================
 local function getChar()
     local c = plr.Character
@@ -93,34 +94,7 @@ local function resolveRemotes()
     if not orbEvent then orbEvent = rEvents:FindFirstChild("orbEvent") end
     if not rebirthEvent then rebirthEvent = rEvents:FindFirstChild("rebirthEvent") end
     if not hatchRemote then hatchRemote = rEvents:FindFirstChild("openCrystalRemote") end
-    if not equipPetEvent then
-        equipPetEvent = rEvents:FindFirstChild("equipPetEvent") or rEvents:FindFirstChild("equipPet")
-    end
-    if not unequipPetEvent then
-        unequipPetEvent = rEvents:FindFirstChild("unequipPetEvent") or rEvents:FindFirstChild("unequipPet") or equipPetEvent
-    end
-end
-
-local function getGems()
-    local ls = plr:FindFirstChild("leaderstats")
-    if ls then
-        local g = ls:FindFirstChild("Gems") or ls:FindFirstChild("Diamonds") or ls:FindFirstChild("Cash")
-        if g then return g.Value end
-    end
-    for _, name in ipairs({"Gems", "Diamonds", "Cash"}) do
-        local g = plr:FindFirstChild(name)
-        if g and (g:IsA("IntValue") or g:IsA("NumberValue")) then return g.Value end
-    end
-    return 0
-end
-
-local function currentWorld()
-    local ok, map = pcall(function()
-        local v = plr:FindFirstChild("currentMap")
-        if v and v:IsA("StringValue") then return v.Value end
-    end)
-    if ok and type(map) == "string" and #map > 0 then return map end
-    return nil
+    if not equipPetEvent then equipPetEvent = rEvents:FindFirstChild("equipPetEvent") end
 end
 
 local function fireOrb(t, w)
@@ -128,9 +102,19 @@ local function fireOrb(t, w)
     return pcall(function() orbEvent:FireServer("collectOrb", t, w) end)
 end
 
+-- ============================================================
+-- FARMING LOOPS
+-- ============================================================
 local orbTask = nil
 local function resolvedMap()
-    if S.selectedMap == "Auto (current)" then return currentWorld() end
+    if S.selectedMap == "Auto (current)" then
+        local ok, map = pcall(function()
+            local v = plr:FindFirstChild("currentMap")
+            if v and v:IsA("StringValue") then return v.Value end
+        end)
+        if ok and type(map) == "string" and #map > 0 then return map end
+        return nil
+    end
     return S.selectedMap
 end
 local function startOrbLoop()
@@ -141,22 +125,16 @@ local function startOrbLoop()
             if orbEvent then
                 local world = resolvedMap()
                 if world then
-                    -- BUILD THE ACTIVE ORB LIST
                     local activeOrbs = {}
                     for orb, active in pairs(S.selectedOrbs) do
                         if active then table.insert(activeOrbs, orb) end
                     end
-                    
                     if #activeOrbs > 0 then
                         local calls = math.clamp(S.orbMult * 2, 1, ORB_BUDGET)
                         local orbIndex = 1
-                        
                         for _ = 1, calls do
                             if not S.autoOrb then break end
-                            local orbToFire = activeOrbs[orbIndex]
-                            fireOrb(orbToFire, world)
-                            
-                            -- Cycle to next orb in the selected list
+                            fireOrb(activeOrbs[orbIndex], world)
                             orbIndex = (orbIndex % #activeOrbs) + 1
                         end
                     end
@@ -218,8 +196,7 @@ local function startHatchLoop()
         while S.autoHatch do
             resolveRemotes()
             if hatchRemote then
-                local crystal = S.selectedCrystal
-                pcall(function() hatchRemote:InvokeServer("openCrystal", crystal) end)
+                pcall(function() hatchRemote:InvokeServer("openCrystal", S.selectedCrystal) end)
             end
             task.wait(HATCH_TICK)
         end
@@ -228,13 +205,17 @@ local function startHatchLoop()
 end
 local function stopHatchLoop() S.autoHatch = false end
 
+-- ============================================================
+-- FIXED PET LOGIC
+-- ============================================================
+-- Returns a table of pet names from petsFolder.Unique
 local function listOwnedPets()
     local names = {}
-    local folders = { "Pets", "PetInventory", "OwnedPets", "Inventory" }
-    for _, fName in ipairs(folders) do
-        local f = plr:FindFirstChild(fName)
-        if f then
-            for _, p in ipairs(f:GetChildren()) do
+    local petsFolder = plr:FindFirstChild("petsFolder")
+    if petsFolder then
+        local unique = petsFolder:FindFirstChild("Unique")
+        if unique then
+            for _, p in ipairs(unique:GetChildren()) do
                 if not table.find(names, p.Name) then table.insert(names, p.Name) end
             end
         end
@@ -243,26 +224,63 @@ local function listOwnedPets()
     return names
 end
 
-local function equipPet(name)
+-- Finds the pet object by name and fires equipPet
+local function equipPet(petName)
     resolveRemotes()
     if not equipPetEvent then return false end
-    return pcall(function()
-        equipPetEvent:FireServer("Equip", name)
-        task.wait(0.1)
-        equipPetEvent:FireServer(name)
-    end)
+    local petsFolder = plr:FindFirstChild("petsFolder")
+    local unique = petsFolder and petsFolder:FindFirstChild("Unique")
+    if not unique then return false end
+
+    for _, pet in ipairs(unique:GetChildren()) do
+        if pet.Name == petName then
+            -- CORRECT PAYLOAD: "equipPet", pet (object)
+            return pcall(function()
+                equipPetEvent:FireServer("equipPet", pet)
+            end)
+        end
+    end
+    return false
 end
 
-local function unequipPet(name)
+-- Finds the pet object by name and fires unequipPet
+local function unequipPet(petName)
     resolveRemotes()
-    if not unequipPetEvent then return false end
-    return pcall(function()
-        unequipPetEvent:FireServer("Unequip", name)
-        task.wait(0.1)
-        unequipPetEvent:FireServer(name)
-    end)
+    if not equipPetEvent then return false end
+    local petsFolder = plr:FindFirstChild("petsFolder")
+    local unique = petsFolder and petsFolder:FindFirstChild("Unique")
+    if not unique then return false end
+
+    for _, pet in ipairs(unique:GetChildren()) do
+        if pet.Name == petName then
+            -- CORRECT PAYLOAD: "unequipPet", pet (object)
+            return pcall(function()
+                equipPetEvent:FireServer("unequipPet", pet)
+            end)
+        end
+    end
+    return false
 end
 
+-- Forcefully unequips ALL pets to clear desync slots
+local function forceUnequipAll()
+    resolveRemotes()
+    if not equipPetEvent then return end
+    local petsFolder = plr:FindFirstChild("petsFolder")
+    local unique = petsFolder and petsFolder:FindFirstChild("Unique")
+    if not unique then return end
+
+    for _, pet in ipairs(unique:GetChildren()) do
+        pcall(function()
+            equipPetEvent:FireServer("unequipPet", pet)
+        end)
+        task.wait(0.05) -- Small delay to avoid rate limit
+    end
+end
+
+-- ============================================================
+-- ESP
+-- ============================================================
 local espGui, espEntries = nil, {}
 local function ensureEspGui()
     if espGui and espGui.Parent then return end
@@ -350,7 +368,7 @@ local function tpNextStage()
 end
 
 -- ============================================================
--- x100 UI GLOW-UP
+-- UI
 -- ============================================================
 local function create(instance, props, children)
     local obj = Instance.new(instance)
@@ -370,123 +388,76 @@ local function tween(obj, time, style, dir, goal)
     TweenService:Create(obj, TweenInfo.new(time or 0.2, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out), goal):Play()
 end
 
--- === FLOATING ACTION BUTTON ===
 local fab = create("TextButton", {
     Size = UDim2.new(0, 50, 0, 50),
     Position = UDim2.new(0, 20, 0, 80),
     BackgroundColor3 = Color3.fromRGB(20, 20, 25),
-    Text = "M",
-    TextColor3 = Color3.fromRGB(255, 255, 255),
-    Font = Enum.Font.GothamBlack,
-    TextSize = 24,
-    AutoButtonColor = false,
+    Text = "M", TextColor3 = Color3.fromRGB(255, 255, 255),
+    Font = Enum.Font.GothamBlack, TextSize = 24, AutoButtonColor = false,
     Parent = gui
 }, {
     create("UICorner", { CornerRadius = UDim.new(1, 0) }),
     create("UIStroke", { Color = Color3.fromRGB(100, 200, 255), Thickness = 2 }),
-    create("UIGradient", {
-        Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(100, 200, 255)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 100, 255))
-        })
-    })
+    create("UIGradient", { Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(100, 200, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 100, 255))
+    })})
 })
 
--- === MAIN WINDOW ===
 local main = create("Frame", {
     Size = UDim2.new(0, 480, 0, 320),
     Position = UDim2.new(0.5, -240, 0.5, -160),
     BackgroundColor3 = Color3.fromRGB(15, 15, 20),
-    BackgroundTransparency = 0.1,
-    Visible = false,
-    Parent = gui
+    BackgroundTransparency = 0.1, Visible = false, Parent = gui
 }, {
     create("UICorner", { CornerRadius = UDim.new(0, 16) }),
     create("UIStroke", { Color = Color3.fromRGB(60, 60, 70), Thickness = 1.5 })
 })
 
--- Main shadow
 create("ImageLabel", {
-    Size = UDim2.new(1, 40, 1, 40),
-    Position = UDim2.new(0, -20, 0, -20),
-    BackgroundTransparency = 1,
-    Image = "rbxassetid://1316045217",
-    ImageColor3 = Color3.new(0, 0, 0),
-    ImageTransparency = 0.6,
-    ScaleType = Enum.ScaleType.Slice,
-    SliceCenter = Rect.new(10, 10, 118, 118),
-    ZIndex = 0,
-    Parent = main
+    Size = UDim2.new(1, 40, 1, 40), Position = UDim2.new(0, -20, 0, -20),
+    BackgroundTransparency = 1, Image = "rbxassetid://1316045217",
+    ImageColor3 = Color3.new(0, 0, 0), ImageTransparency = 0.6,
+    ScaleType = Enum.ScaleType.Slice, SliceCenter = Rect.new(10, 10, 118, 118),
+    ZIndex = 0, Parent = main
 })
 
--- Header
-local header = create("Frame", {
-    Size = UDim2.new(1, 0, 0, 50),
-    BackgroundTransparency = 1,
-    ZIndex = 1,
-    Parent = main
-})
+local header = create("Frame", { Size = UDim2.new(1, 0, 0, 50), BackgroundTransparency = 1, ZIndex = 1, Parent = main })
 
 local title = create("TextLabel", {
-    Size = UDim2.new(1, -60, 1, 0),
-    Position = UDim2.new(0, 20, 0, 0),
-    BackgroundTransparency = 1,
-    Text = "MARTIN HUB // GLASS",
-    TextColor3 = Color3.fromRGB(255, 255, 255),
-    Font = Enum.Font.GothamBold,
-    TextSize = 18,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    Parent = header
+    Size = UDim2.new(1, -60, 1, 0), Position = UDim2.new(0, 20, 0, 0),
+    BackgroundTransparency = 1, Text = "MARTIN HUB // GLASS",
+    TextColor3 = Color3.fromRGB(255, 255, 255), Font = Enum.Font.GothamBold,
+    TextSize = 18, TextXAlignment = Enum.TextXAlignment.Left, Parent = header
 }, {
-    create("UIGradient", {
-        Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(100, 200, 255)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 100, 255))
-        })
-    })
+    create("UIGradient", { Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(100, 200, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 100, 255))
+    })})
 })
 
 local closeBtn = create("TextButton", {
-    Size = UDim2.new(0, 30, 0, 30),
-    Position = UDim2.new(1, -45, 0.5, -15),
-    BackgroundColor3 = Color3.fromRGB(255, 80, 80),
-    Text = "X",
-    TextColor3 = Color3.new(1, 1, 1),
-    Font = Enum.Font.GothamBold,
-    TextSize = 14,
-    AutoButtonColor = false,
-    Parent = header
-}, {
-    create("UICorner", { CornerRadius = UDim.new(0, 8) })
-})
+    Size = UDim2.new(0, 30, 0, 30), Position = UDim2.new(1, -45, 0.5, -15),
+    BackgroundColor3 = Color3.fromRGB(255, 80, 80), Text = "X",
+    TextColor3 = Color3.new(1, 1, 1), Font = Enum.Font.GothamBold, TextSize = 14,
+    AutoButtonColor = false, Parent = header
+}, { create("UICorner", { CornerRadius = UDim.new(0, 8) }) })
 
--- Divider
 create("Frame", {
-    Size = UDim2.new(1, -40, 0, 1),
-    Position = UDim2.new(0, 20, 0, 50),
-    BackgroundColor3 = Color3.fromRGB(60, 60, 70),
-    Parent = main
+    Size = UDim2.new(1, -40, 0, 1), Position = UDim2.new(0, 20, 0, 50),
+    BackgroundColor3 = Color3.fromRGB(60, 60, 70), Parent = main
 })
 
--- Sidebar
 local sidebar = create("Frame", {
-    Size = UDim2.new(0, 100, 1, -80),
-    Position = UDim2.new(0, 10, 0, 60),
-    BackgroundTransparency = 1,
-    Parent = main
-}, {
-    create("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder })
-})
+    Size = UDim2.new(0, 100, 1, -80), Position = UDim2.new(0, 10, 0, 60),
+    BackgroundTransparency = 1, Parent = main
+}, { create("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }) })
 
--- Content
 local content = create("Frame", {
-    Size = UDim2.new(1, -130, 1, -80),
-    Position = UDim2.new(0, 120, 0, 60),
-    BackgroundTransparency = 1,
-    Parent = main
+    Size = UDim2.new(1, -130, 1, -80), Position = UDim2.new(0, 120, 0, 60),
+    BackgroundTransparency = 1, Parent = main
 })
 
--- Tab Logic
 local pages = {}
 local tabButtons = {}
 local currentTab = ""
@@ -517,15 +488,10 @@ end
 local TAB_NAMES = { "Main", "Farm", "Orbs", "Hatch", "Pets", "TP", "Vis" }
 for i, name in ipairs(TAB_NAMES) do
     local btn = create("TextButton", {
-        Size = UDim2.new(1, 0, 0, 32),
-        BackgroundColor3 = Color3.fromRGB(20, 20, 25),
-        Text = name,
-        TextColor3 = Color3.fromRGB(150, 150, 160),
-        Font = Enum.Font.GothamMedium,
-        TextSize = 13,
-        AutoButtonColor = false,
-        LayoutOrder = i,
-        Parent = sidebar
+        Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = Color3.fromRGB(20, 20, 25),
+        Text = name, TextColor3 = Color3.fromRGB(150, 150, 160),
+        Font = Enum.Font.GothamMedium, TextSize = 13, AutoButtonColor = false,
+        LayoutOrder = i, Parent = sidebar
     }, {
         create("UICorner", { CornerRadius = UDim.new(0, 8) }),
         create("UIStroke", { Color = Color3.fromRGB(50, 50, 60), Thickness = 1 })
@@ -537,42 +503,26 @@ for i, name in ipairs(TAB_NAMES) do
     tabButtons[name] = btn
 
     local page = create("ScrollingFrame", {
-        Name = name .. "Page",
-        Size = UDim2.new(1, 0, 1, 0),
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        ScrollBarThickness = 2,
-        ScrollBarImageColor3 = Color3.fromRGB(100, 200, 255),
-        CanvasSize = UDim2.new(0, 0, 0, 0),
-        AutomaticCanvasSize = Enum.AutomaticSize.Y,
-        Visible = false,
-        Parent = content
-    }, {
-        create("UIListLayout", { Padding = UDim.new(0, 6) })
-    })
+        Name = name .. "Page", Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1, BorderSizePixel = 0,
+        ScrollBarThickness = 2, ScrollBarImageColor3 = Color3.fromRGB(100, 200, 255),
+        CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        Visible = false, Parent = content
+    }, { create("UIListLayout", { Padding = UDim.new(0, 6) }) })
     pages[name] = page
 end
 
--- === UI COMPONENTS ===
-
 local function AddSection(parent, text)
     create("TextLabel", {
-        Size = UDim2.new(1, 0, 0, 20),
-        BackgroundTransparency = 1,
-        Text = text,
-        TextColor3 = Color3.fromRGB(120, 120, 135),
-        Font = Enum.Font.GothamBold,
-        TextSize = 11,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = parent
+        Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1, Text = text,
+        TextColor3 = Color3.fromRGB(120, 120, 135), Font = Enum.Font.GothamBold,
+        TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Parent = parent
     })
 end
 
--- Smooth Toggle
 local function AddToggle(parent, text, key, callback)
     local frame = create("Frame", {
-        Size = UDim2.new(1, 0, 0, 36),
-        BackgroundColor3 = Color3.fromRGB(20, 20, 25),
+        Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = Color3.fromRGB(20, 20, 25),
         Parent = parent
     }, {
         create("UICorner", { CornerRadius = UDim.new(0, 8) }),
@@ -580,40 +530,23 @@ local function AddToggle(parent, text, key, callback)
     })
     
     create("TextLabel", {
-        Size = UDim2.new(1, -60, 1, 0),
-        Position = UDim2.new(0, 12, 0, 0),
-        BackgroundTransparency = 1,
-        Text = text,
-        TextColor3 = Color3.fromRGB(220, 220, 230),
-        Font = Enum.Font.Gotham,
-        TextSize = 13,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = frame
+        Size = UDim2.new(1, -60, 1, 0), Position = UDim2.new(0, 12, 0, 0),
+        BackgroundTransparency = 1, Text = text, TextColor3 = Color3.fromRGB(220, 220, 230),
+        Font = Enum.Font.Gotham, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, Parent = frame
     })
     
     local track = create("Frame", {
-        Size = UDim2.new(0, 36, 0, 20),
-        Position = UDim2.new(1, -48, 0.5, -10),
-        BackgroundColor3 = Color3.fromRGB(50, 50, 60),
-        Parent = frame
-    }, {
-        create("UICorner", { CornerRadius = UDim.new(1, 0) })
-    })
+        Size = UDim2.new(0, 36, 0, 20), Position = UDim2.new(1, -48, 0.5, -10),
+        BackgroundColor3 = Color3.fromRGB(50, 50, 60), Parent = frame
+    }, { create("UICorner", { CornerRadius = UDim.new(1, 0) }) })
     
     local thumb = create("Frame", {
-        Size = UDim2.new(0, 16, 0, 16),
-        Position = UDim2.new(0, 2, 0.5, -8),
-        BackgroundColor3 = Color3.fromRGB(200, 200, 210),
-        Parent = track
-    }, {
-        create("UICorner", { CornerRadius = UDim.new(1, 0) })
-    })
+        Size = UDim2.new(0, 16, 0, 16), Position = UDim2.new(0, 2, 0.5, -8),
+        BackgroundColor3 = Color3.fromRGB(200, 200, 210), Parent = track
+    }, { create("UICorner", { CornerRadius = UDim.new(1, 0) }) })
     
     local btn = create("TextButton", {
-        Size = UDim2.new(1, 0, 1, 0),
-        BackgroundTransparency = 1,
-        Text = "",
-        Parent = frame
+        Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", Parent = frame
     })
     
     local function UpdateState(on)
@@ -632,17 +565,11 @@ local function AddToggle(parent, text, key, callback)
     UpdateState(S[key])
 end
 
--- Animated Button
 local function AddButton(parent, text, callback)
     local btn = create("TextButton", {
-        Size = UDim2.new(1, 0, 0, 34),
-        BackgroundColor3 = Color3.fromRGB(30, 30, 38),
-        Text = text,
-        TextColor3 = Color3.fromRGB(220, 220, 230),
-        Font = Enum.Font.Gotham,
-        TextSize = 13,
-        AutoButtonColor = false,
-        Parent = parent
+        Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = Color3.fromRGB(30, 30, 38),
+        Text = text, TextColor3 = Color3.fromRGB(220, 220, 230),
+        Font = Enum.Font.Gotham, TextSize = 13, AutoButtonColor = false, Parent = parent
     }, {
         create("UICorner", { CornerRadius = UDim.new(0, 8) }),
         create("UIStroke", { Color = Color3.fromRGB(50, 50, 60), Thickness = 1 })
@@ -656,79 +583,6 @@ local function AddButton(parent, text, callback)
         if callback then callback(btn) end
     end)
     return btn
-end
-
--- Smooth Slider
-local function AddSlider(parent, text, default, min, max, callback)
-    local frame = create("Frame", {
-        Size = UDim2.new(1, 0, 0, 44),
-        BackgroundColor3 = Color3.fromRGB(20, 20, 25),
-        Parent = parent
-    }, {
-        create("UICorner", { CornerRadius = UDim.new(0, 8) }),
-        create("UIStroke", { Color = Color3.fromRGB(40, 40, 50), Thickness = 1 })
-    })
-    
-    local lbl = create("TextLabel", {
-        Size = UDim2.new(1, -20, 0, 20),
-        Position = UDim2.new(0, 10, 0, 4),
-        BackgroundTransparency = 1,
-        Text = text .. ": " .. default,
-        TextColor3 = Color3.fromRGB(200, 200, 210),
-        Font = Enum.Font.Gotham,
-        TextSize = 12,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = frame
-    })
-    
-    local track = create("Frame", {
-        Size = UDim2.new(1, -20, 0, 6),
-        Position = UDim2.new(0, 10, 0, 28),
-        BackgroundColor3 = Color3.fromRGB(40, 40, 50),
-        Parent = frame
-    }, {
-        create("UICorner", { CornerRadius = UDim.new(1, 0) })
-    })
-    
-    local fill = create("Frame", {
-        Size = UDim2.new((default - min) / (max - min), 0, 1, 0),
-        BackgroundColor3 = Color3.fromRGB(100, 200, 255),
-        Parent = track
-    }, {
-        create("UICorner", { CornerRadius = UDim.new(1, 0) }),
-        create("UIGradient", {
-            Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, Color3.fromRGB(100, 200, 255)),
-                ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 100, 255))
-            })
-        })
-    })
-    
-    local knob = create("Frame", {
-        Size = UDim2.new(0, 14, 0, 14),
-        Position = UDim2.new((default - min) / (max - min), -7, 0.5, -7),
-        BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-        Parent = track
-    }, {
-        create("UICorner", { CornerRadius = UDim.new(1, 0) }),
-        create("UIStroke", { Color = Color3.fromRGB(100, 200, 255), Thickness = 2 })
-    })
-    
-    local dragging = false
-    local function update(input)
-        local relX = math.clamp(input.Position.X - track.AbsolutePosition.X, 0, track.AbsoluteSize.X)
-        local pct = relX / track.AbsoluteSize.X
-        tween(fill, 0.1, nil, nil, { Size = UDim2.new(pct, 0, 1, 0) })
-        tween(knob, 0.1, nil, nil, { Position = UDim2.new(pct, -7, 0.5, -7) })
-        local val = math.clamp(math.floor(min + pct * (max - min) + 0.5), min, max)
-        lbl.Text = text .. ": " .. val
-        if callback then callback(val) end
-    end
-    
-    knob.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = true end end)
-    track.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = true; update(input) end end)
-    UIS.InputChanged:Connect(function(input) if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then update(input) end end)
-    UIS.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end end)
 end
 
 -- === PAGE: MAIN ===
@@ -752,37 +606,23 @@ AddToggle(farmP, "Auto Rebirth", "autoRebirth", function(on) if on then resolveR
 
 AddSection(farmP, "BATCH SETTINGS")
 local batchFrame = create("Frame", {
-    Size = UDim2.new(1, 0, 0, 34),
-    BackgroundColor3 = Color3.fromRGB(20, 20, 25),
-    Parent = farmP
+    Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = Color3.fromRGB(20, 20, 25), Parent = farmP
 }, {
     create("UICorner", { CornerRadius = UDim.new(0, 8) }),
     create("UIStroke", { Color = Color3.fromRGB(40, 40, 50), Thickness = 1 })
 })
 
 local batchBtn = create("TextButton", {
-    Size = UDim2.new(0.5, -4, 1, 0),
-    BackgroundTransparency = 1,
-    Text = "Batch: x1",
-    TextColor3 = Color3.fromRGB(220, 220, 230),
-    Font = Enum.Font.Gotham,
-    TextSize = 13,
-    Parent = batchFrame
+    Size = UDim2.new(0.5, -4, 1, 0), BackgroundTransparency = 1,
+    Text = "Batch: x1", TextColor3 = Color3.fromRGB(220, 220, 230),
+    Font = Enum.Font.Gotham, TextSize = 13, Parent = batchFrame
 })
 
 local batchBox = create("TextBox", {
-    Size = UDim2.new(0.5, -4, 1, 0),
-    Position = UDim2.new(0.5, 4, 0, 0),
-    BackgroundColor3 = Color3.fromRGB(30, 30, 38),
-    TextColor3 = Color3.fromRGB(255, 255, 255),
-    Font = Enum.Font.Gotham,
-    TextSize = 13,
-    PlaceholderText = "1-30",
-    Text = "1",
-    Parent = batchFrame
-}, {
-    create("UICorner", { CornerRadius = UDim.new(0, 6) })
-})
+    Size = UDim2.new(0.5, -4, 1, 0), Position = UDim2.new(0.5, 4, 0, 0),
+    BackgroundColor3 = Color3.fromRGB(30, 30, 38), TextColor3 = Color3.fromRGB(255, 255, 255),
+    Font = Enum.Font.Gotham, TextSize = 13, PlaceholderText = "1-50", Text = "1", Parent = batchFrame
+}, { create("UICorner", { CornerRadius = UDim.new(0, 6) }) })
 
 batchBtn.MouseButton1Click:Connect(function()
     S.orbMult = (S.orbMult >= MULT_MAX) and 1 or (S.orbMult + 1)
@@ -838,23 +678,20 @@ repaintMaps()
 local hatchP = pages["Hatch"]
 AddSection(hatchP, "GEM COUNTER")
 local gemsLbl = create("TextLabel", {
-    Size = UDim2.new(1, 0, 0, 34),
-    BackgroundColor3 = Color3.fromRGB(20, 30, 25),
-    Text = "  💎 Gems: loading...",
-    TextColor3 = Color3.fromRGB(150, 240, 220),
-    Font = Enum.Font.GothamBold,
-    TextSize = 14,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    Parent = hatchP
-}, {
-    create("UICorner", { CornerRadius = UDim.new(0, 8) }),
-    create("UIStroke", { Color = Color3.fromRGB(50, 100, 80), Thickness = 1 })
-})
+    Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = Color3.fromRGB(20, 30, 25),
+    Text = "  💎 Gems: loading...", TextColor3 = Color3.fromRGB(150, 240, 220),
+    Font = Enum.Font.GothamBold, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, Parent = hatchP
+}, { create("UICorner", { CornerRadius = UDim.new(0, 8) }), create("UIStroke", { Color = Color3.fromRGB(50, 100, 80), Thickness = 1 }) })
 
 task.spawn(function()
     while true do
         task.wait(0.5)
-        local val = getGems()
+        local val = 0
+        local ls = plr:FindFirstChild("leaderstats")
+        if ls then
+            local g = ls:FindFirstChild("Gems") or ls:FindFirstChild("Diamonds")
+            if g then val = g.Value end
+        end
         gemsLbl.Text = string.format("  💎 Gems: %s", tostring(val))
         gemsLbl.TextColor3 = val == 0 and Color3.fromRGB(220,100,100) or Color3.fromRGB(150,240,220)
     end
@@ -881,37 +718,27 @@ end
 repaintCrystals()
 
 local customBox = create("TextBox", {
-    Size = UDim2.new(1, 0, 0, 32),
-    BackgroundColor3 = Color3.fromRGB(20, 20, 25),
-    PlaceholderText = "Custom crystal name...",
-    Text = "",
-    TextColor3 = Color3.fromRGB(230, 230, 236),
-    PlaceholderColor3 = Color3.fromRGB(120, 120, 135),
-    Font = Enum.Font.Gotham,
-    TextSize = 12,
-    ClearTextOnFocus = false,
-    Parent = hatchP
-}, {
-    create("UICorner", { CornerRadius = UDim.new(0, 8) }),
-    create("UIStroke", { Color = Color3.fromRGB(40, 40, 50), Thickness = 1 })
-})
+    Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = Color3.fromRGB(20, 20, 25),
+    PlaceholderText = "Custom crystal name...", Text = "", TextColor3 = Color3.fromRGB(230, 230, 236),
+    PlaceholderColor3 = Color3.fromRGB(120, 120, 135), Font = Enum.Font.Gotham,
+    TextSize = 12, ClearTextOnFocus = false, Parent = hatchP
+}, { create("UICorner", { CornerRadius = UDim.new(0, 8) }), create("UIStroke", { Color = Color3.fromRGB(40, 40, 50), Thickness = 1 }) })
 customBox.FocusLost:Connect(function()
     local v = customBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
     if #v > 0 then S.selectedCrystal = v; repaintCrystals() end
 end)
 
--- === PAGE: PETS ===
+-- === PAGE: PETS (Fixed Logic) ===
 local petsP = pages["Pets"]
 AddSection(petsP, "PET CONTROLS")
-AddButton(petsP, "Reset Character (Fix Slots)", function()
+
+-- The Force Unequip button clears the phantom slot
+AddButton(petsP, "Force Unequip ALL (Fix Slot)", function()
+    forceUnequipAll()
+end)
+
+AddButton(petsP, "Reset Character (Hard Fix)", function()
     local c = plr.Character; if c then local h = c:FindFirstChildOfClass("Humanoid"); if h then h.Health = 0 end end
-end)
-AddButton(petsP, "Equip MAX (Best)", function()
-    local owned = listOwnedPets(); if #owned == 0 then return end
-    for i = 1, math.min(2, #owned) do equipPet(owned[i]); task.wait(1) end
-end)
-AddButton(petsP, "Unequip ALL", function()
-    for _, name in ipairs(listOwnedPets()) do unequipPet(name); task.wait(0.2) end
 end)
 
 local petContainer = create("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Parent = petsP }, { create("UIListLayout", { Padding = UDim.new(0, 4) }) })
@@ -929,13 +756,10 @@ end
 AddButton(petsP, "Refresh Pet List", buildPetList)
 
 local petBox = create("TextBox", {
-    Size = UDim2.new(1, 0, 0, 32),
-    BackgroundColor3 = Color3.fromRGB(20, 20, 25),
-    PlaceholderText = "Custom pet name...",
-    Text = "",
-    TextColor3 = Color3.fromRGB(230, 230, 236),
-    PlaceholderColor3 = Color3.fromRGB(120, 120, 135),
-    Font = Enum.Font.Gotham, TextSize = 12, ClearTextOnFocus = false, Parent = petsP
+    Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = Color3.fromRGB(20, 20, 25),
+    PlaceholderText = "Custom pet name...", Text = "", TextColor3 = Color3.fromRGB(230, 230, 236),
+    PlaceholderColor3 = Color3.fromRGB(120, 120, 135), Font = Enum.Font.Gotham,
+    TextSize = 12, ClearTextOnFocus = false, Parent = petsP
 }, { create("UICorner", { CornerRadius = UDim.new(0, 8) }), create("UIStroke", { Color = Color3.fromRGB(40, 40, 50), Thickness = 1 }) })
 AddButton(petsP, "Equip Name from Box", function()
     local v = petBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
@@ -996,4 +820,4 @@ closeBtn.MouseButton1Click:Connect(function() fab.MouseButton1Click:Fire() end)
 
 -- === STARTUP ===
 resolveRemotes(); applyStats()
-print("[martin hub] v16 loaded — Multi-Orb stacking active, tap M to open")
+print("[martin hub] v17 loaded — pet slot fix + x50 batch, tap M to open")
